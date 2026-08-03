@@ -2,9 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Нужен доступ к микрофону, чтобы учитывать ваши реплики в контексте (канал You)</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Нужен доступ к системному аудио, чтобы распознавать речь собеседников (канал Them)</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Нужен для анализа экрана и режима «Реши задачу»</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Нужен для распознавания речи через Apple Speech, если локальный Whisper недоступен</string>
 </dict>
 </plist>

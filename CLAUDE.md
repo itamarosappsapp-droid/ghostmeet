@@ -46,9 +46,19 @@ plutil -p ~/Library/Developer/Xcode/DerivedData/GhostMeet-*/Build/Products/Debug
 
 - **Deployment target is macOS 14.4**, set at the *project* level (`MACOSX_DEPLOYMENT_TARGET`); the target inherits it, so the target's General tab shows the value without defining it. Do not raise it — Core Audio Process Tap requires 14.4.
 - **App Sandbox is off** (`ENABLE_APP_SANDBOX = NO`). Deliberate: this is a local BYOK app that needs Process Tap and screen capture, not an App Store build.
-- **`INFOPLIST_KEY_*` build settings only work for keys Xcode knows.** `NSAudioCaptureUsageDescription` and `NSScreenCaptureUsageDescription` are *silently dropped* if set that way — they build fine and simply never reach the bundle. They live in the real `Info.plist` at `SRCROOT/Info.plist`, merged with the generated one (`GENERATE_INFOPLIST_FILE` stays `YES`). `NSMicrophoneUsageDescription` is a known key and stays an `INFOPLIST_KEY_*` setting.
+- **All usage-description strings live in `SRCROOT/Info.plist`**, merged with the generated plist (`GENERATE_INFOPLIST_FILE` stays `YES`). Add new ones there, not as build settings — **`INFOPLIST_KEY_*` only works for keys Xcode knows**, and unknown ones like `NSAudioCaptureUsageDescription` / `NSScreenCaptureUsageDescription` are *silently dropped*: the build succeeds and the key simply never reaches the bundle. Always confirm with the `plutil` command above rather than trusting `-showBuildSettings`.
 - **`Info.plist` must stay outside `GhostMeet/GhostMeet/`.** That folder is a `PBXFileSystemSynchronizedRootGroup` — anything inside is picked up automatically, and a plist there gets copied into `Contents/Resources/` as a stray duplicate. Same trap applies to any other non-source file.
 - Because the source group is file-system-synchronized, **new `.swift` files are added to the target just by creating them on disk** — no pbxproj edit needed.
+
+### Permissions and TCC
+
+Four usage strings are declared: microphone (You channel), audio capture (Them channel via Process Tap), screen capture (Solve on screen), speech recognition (Apple Speech fallback). Note that macOS shows **no purpose string** for the Screen Recording prompt — `NSScreenCaptureUsageDescription` is declared for completeness, but the user will never read it.
+
+The app is currently **ad-hoc signed** (`CODE_SIGN_IDENTITY = -`, no team). TCC grants are keyed to the signature, so the ad-hoc identity changes across rebuilds and macOS may re-prompt or silently drop previously granted mic/audio/screen permissions. If permissions start behaving erratically during audio work, this is the first thing to check — switching to a stable Apple Development identity (set `DEVELOPMENT_TEAM`) fixes it. Hardened Runtime is off; if it is ever enabled, microphone access will additionally require the `com.apple.security.device.audio-input` entitlement.
+
+### Open decisions
+
+- **Dock icon vs. accessory app.** A hidden always-on-top copilot would normally run as an accessory (`LSUIElement = true` / `NSApplication.setActivationPolicy(.accessory)`), with no Dock icon and no app switcher entry. Not set — decide when building the window layer, since it also affects how the window takes focus.
 
 ## What GhostMeet is
 
