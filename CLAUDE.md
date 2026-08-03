@@ -8,14 +8,47 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-This repository contains **only a specification — no source code, no Xcode project, no build system, and no git repo yet.** The entire contents are:
+A bare SwiftUI app skeleton exists (`GhostMeetApp.swift` + `ContentView.swift` — Xcode template, no GhostMeet logic yet). None of the spec is implemented: no audio capture, no STT, no LLM layer, no window/hotkey work. There is no test target yet.
 
-- [docs/GhostMeet.md](docs/GhostMeet.md) — the working spec (architecture, tech stack, planned file layout, MVP/v1 checklists)
-- [docs/GhostMeet-Prompts.md](docs/GhostMeet-Prompts.md) — full system/user prompt texts for every LLM mode
-
-There are no build, lint, or test commands to run. The first implementation task is to create the macOS app target itself (SwiftUI + AppKit, min deployment **macOS 14.4** — required for Core Audio Process Tap). Do not invent or reference build commands that don't exist; add them to this file once a real project/scheme exists.
+```
+GhostMeet/                      ← repo root
+├── CLAUDE.md
+├── docs/                       ← the authoritative spec (read before implementing)
+└── GhostMeet/                  ← SRCROOT
+    ├── GhostMeet.xcodeproj
+    ├── Info.plist              ← lives HERE, outside the source folder — see below
+    └── GhostMeet/              ← file-system-synchronized source group
+```
 
 Both spec documents are written in Russian. Keep docs and in-app user-facing strings consistent with that; code identifiers and comments follow normal Swift conventions in English.
+
+## Build and run
+
+All commands run from `GhostMeet/` (the folder containing `.xcodeproj`):
+
+```bash
+xcodebuild -project GhostMeet.xcodeproj -scheme GhostMeet -configuration Debug build
+```
+
+```bash
+xcodebuild -project GhostMeet.xcodeproj -showBuildSettings -target GhostMeet
+```
+
+No test target exists yet, so there is no `test` command. When one is added, document how to run a single test here.
+
+Verify what actually landed in the app bundle after touching Info.plist or deployment settings:
+
+```bash
+plutil -p ~/Library/Developer/Xcode/DerivedData/GhostMeet-*/Build/Products/Debug/GhostMeet.app/Contents/Info.plist
+```
+
+### Project configuration gotchas
+
+- **Deployment target is macOS 14.4**, set at the *project* level (`MACOSX_DEPLOYMENT_TARGET`); the target inherits it, so the target's General tab shows the value without defining it. Do not raise it — Core Audio Process Tap requires 14.4.
+- **App Sandbox is off** (`ENABLE_APP_SANDBOX = NO`). Deliberate: this is a local BYOK app that needs Process Tap and screen capture, not an App Store build.
+- **`INFOPLIST_KEY_*` build settings only work for keys Xcode knows.** `NSAudioCaptureUsageDescription` and `NSScreenCaptureUsageDescription` are *silently dropped* if set that way — they build fine and simply never reach the bundle. They live in the real `Info.plist` at `SRCROOT/Info.plist`, merged with the generated one (`GENERATE_INFOPLIST_FILE` stays `YES`). `NSMicrophoneUsageDescription` is a known key and stays an `INFOPLIST_KEY_*` setting.
+- **`Info.plist` must stay outside `GhostMeet/GhostMeet/`.** That folder is a `PBXFileSystemSynchronizedRootGroup` — anything inside is picked up automatically, and a plist there gets copied into `Contents/Resources/` as a stray duplicate. Same trap applies to any other non-source file.
+- Because the source group is file-system-synchronized, **new `.swift` files are added to the target just by creating them on disk** — no pbxproj edit needed.
 
 ## What GhostMeet is
 
