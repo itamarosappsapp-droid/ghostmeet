@@ -100,7 +100,21 @@ Cross-cutting rules from that file that are easy to get wrong:
 
 ## Permissions
 
-`NSMicrophoneUsageDescription`, `NSAudioCaptureUsageDescription`, `NSScreenCaptureUsageDescription` — exact Russian strings are in [docs/GhostMeet.md](docs/GhostMeet.md#разрешения-infoplist).
+Declared in [GhostMeet/Info.plist](GhostMeet/Info.plist), not in the spec — the spec lists three, the project also declares `NSSpeechRecognitionUsageDescription` for the Apple Speech fallback. See the TCC notes above before debugging permission behaviour.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as markdown files under `.scratch/<feature-slug>/` — this repo has no git remote. See [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md).
+
+### Triage labels
+
+The five canonical roles, unrenamed (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`), recorded as a `Status:` line in each issue file. See [docs/agents/triage-labels.md](docs/agents/triage-labels.md).
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` and one `docs/adr/` at the repo root, both created lazily by `/domain-modeling`. See [docs/agents/domain.md](docs/agents/domain.md).
 
 ## Reference projects
 
