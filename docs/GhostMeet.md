@@ -4,7 +4,7 @@ macOS-приложение для real-time помощи во время вид�
 
 Приложение:
 - Слушает **два канала**: твой микрофон (**You**) и звук собеседников (**Them**)
-- Распознаёт речь локально (Whisper MLX)
+- Распознаёт речь локально (WhisperKit)
 - Мгновенно отвечает через подключаемые LLM (облачные + локальные)
 - Может анализировать экран и давать готовые решения задач
 - Отображается поверх всех окон
@@ -35,18 +35,25 @@ Them: А почему не Mongo?
 Модель видит размеченный диалог и по system prompt понимает, за кого отвечать.
 
 **Почему Process Tap, а не getDisplayMedia loopback (как в cue):**
-- Чище: только выбранный процесс, без уведомлений и музыки
+- Чище: только выбранное приложение, без уведомлений и музыки из других программ
 - Меньше риска, что твой голос попадёт в Them (нет loopback monitoring)
 - Узкое permission (Audio Capture), а не обязательно Screen Recording  
   Reference: [CallCapture](https://github.com/bodharma/callcapture), [Recap](https://github.com/RecapAI/Recap), [AudioCap](https://github.com/insidegui/AudioCap), [audiotee](https://github.com/makeusabrew/audiotee)
 
-Fallback (опционально): ScreenCaptureKit system audio, если Process Tap недоступен.
+Оговорка про гранулярность: и Process Tap, и ScreenCaptureKit работают на уровне **приложения**. Отделить вкладку со звонком от других вкладок того же браузера нельзя ни тем, ни другим способом — предполагается, что во время звонка в браузере не играет ничего постороннего.
+
+**Обе реализации делаются и переключаются в настройках** (см. [ADR-0001](adr/0001-swappable-backends-behind-protocols.md)): Process Tap — по умолчанию, ScreenCaptureKit — альтернатива и путь автоматического отката, если тап отвалился посреди звонка. Реализуются по очереди: сначала Process Tap через общий протокол захвата, потом SCK в готовый шов.
 
 ### Speech-to-Text
-- Основной: **Whisper через MLX** (локально, Apple Silicon)
-- Fallback: Apple Speech Framework
-- Отдельный flush для каждого канала (как в cue: ~3–4 сек + RMS-gate против тишины)
-- Модели: `tiny` / `base` / `small` / `medium` (выбор по железу)
+
+Движков тоже два, за общим протоколом (см. [ADR-0002](adr/0002-stt-engine-choice.md)):
+
+- **WhisperKit** (пакет `argmax-oss-swift`, CoreML/ANE) — основной, работает с русским и английским. Модель выбирается в настройках, а не зашита.
+- **`SpeechAnalyzer`** (macOS 26) — вдвое быстрее `large-v3-turbo`, VAD в комплекте, но **русского среди его 30 локалей нет**, поэтому применим только к англоязычным звонкам и закрыт `@available`.
+- `SFSpeechRecognizer` — аварийный запасной путь; русский поддерживает.
+- MLX как рантайм для Whisper **отклонён**: под Swift экосистема сырая.
+
+Нарезка на реплики — не по таймеру, а по паузе: реплика закрывается после ~800 мс тишины в канале, и тогда же стартуют распознавание и запрос к модели. Страховочный принудительный флаш ~10 с нужен для монологов без внятных пауз. RMS-gate против тишины остаётся.
 
 ### LLM (подключаемые провайдеры)
 
@@ -63,10 +70,12 @@ Fallback (опционально): ScreenCaptureKit system audio, если Proce
 ### Контекст разговора
 - Скользящее окно последних N минут / N реплик (по умолчанию ~10–15 реплик, как limit в cue prompts)
 - Старое автоматически суммаризируется и подмешивается в system prompt
+- **Профиль пользователя** (опыт, стек, роль) задаётся в настройках и дописывается в конец system-промпта. Относится к пользователю, а не к звонку, поэтому очистку контекста переживает
 - Можно очистить одной кнопкой / хоткеем
 
 ### Анализ экрана
-- Хоткей → скриншот (ScreenCaptureKit / CGWindow)
+- Скриншот прикладывается к **каждой** автоматической подсказке, а не только по хоткею (см. [ADR-0003](adr/0003-proactive-suggestion-loop.md)): заранее неизвестно, ссылается ли вопрос на экран
+- Собственное окно в скриншот не попадает — его исключает тот же `sharingType = .none`
 - OCR через Vision Framework
 - Режим «Реши задачу» — готовый ответ, не лекция  
   Промпт-подход близок к режиму `leetcode` / `assist` в [cue](https://github.com/Blueturboguy07/cue)
@@ -75,12 +84,18 @@ Fallback (опционально): ScreenCaptureKit system audio, если Proce
 - Always-on-top (`NSWindow` level + `collectionBehavior`)
 - `sharingType = .none` / content protection — исключение из screen capture  
   (та же идея, что `setContentProtection(true)` в cue)
+- **Accessory-приложение** (`LSUIElement`): без иконки в Dock и строки в Cmd+Tab, чтобы не перехватывать фокус у окна звонка
 - Регулируемая прозрачность, ресайз, сохранение позиции
 - Компактный / расширенный режим
+- **Лента подсказок** со скроллом: автоскролл к новой, последняя визуально выделена
 - Индикаторы: слушает / думает / ошибка; live-dot для dual-channel
+- Об ошибках приложение сообщает **только внутри своего окна** — никаких системных уведомлений, звуков и бейджей: баннер всплывёт поверх шаринга и выдаст присутствие приложения
 
 ### Горячие клавиши (настраиваемые)
-- Показать / скрыть
+
+Основной способ получить подсказку — не хоткей: она появляется сама по паузе в речи собеседника. Хоткеи — вспомогательные.
+
+- Показать / скрыть (паника: прячет окно, захват при этом продолжается)
 - Assist («что сделать / что сказать сейчас»)
 - Скриншот → решить задачу
 - Старт/стоп listening
@@ -88,7 +103,8 @@ Fallback (опционально): ScreenCaptureKit system audio, если Proce
 - Прозрачность
 
 ### Скрытие при шаринге
-Пользователь шарит **вкладку или окно**, не весь экран.  
+
+Шаринг **всего экрана не поддерживается сознательно** — см. [ADR-0004](adr/0004-invisibility-scope.md). Пользователь шарит **вкладку или окно**, не весь экран.  
 Окно GhostMeet с `sharingType = .none` не попадает в захват.  
 Для Zoom (как в cue): Screen capture mode → *Advanced capture with window filtering*.
 
@@ -102,7 +118,7 @@ Fallback (опционально): ScreenCaptureKit system audio, если Proce
 ├─────────────────┬──────────────────────┬─────────────────────┤
 │   UI (SwiftUI)  │   Audio Pipeline     │  Intelligence       │
 │                 │                      │                     │
-│ Always-on-top   │  Mic ──► You buffer  │  STT (Whisper MLX)  │
+│ Always-on-top   │  Mic ──► You buffer  │  STT (WhisperKit)   │
 │ Opacity/Resize  │  ProcessTap ─► Them  │         ↓           │
 │ Hotkeys         │         ↓            │  Transcript You/Them│
 │                 │  PCM queues          │         ↓           │
@@ -116,16 +132,17 @@ Fallback (опционально): ScreenCaptureKit system audio, если Proce
 ### Dual-channel пайплайн (по мотивам cue)
 
 1. **Capture**  
-   - You: AVAudioEngine  
-   - Them: Core Audio Process Tap → Aggregate Device → IOProc  
+   - You: AVAudioEngine с включённым VPIO (`setVoiceProcessingEnabled`) — системное эхоподавление, чтобы голос собеседника из колонок не протекал в канал `You`  
+   - Them: Core Audio Process Tap → Aggregate Device → IOProc, либо ScreenCaptureKit — за общим протоколом  
 
 2. **Buffer + gate**  
    Отдельные буферы `you` / `them`.  
-   Flush каждые ~3–4 с, минимум длины (~0.5–0.8 с), RMS-gate от тишины  
-   (как `FLUSH_MS` / `MIN_BYTES` / `RMS_GATE` в [cue/main.js](https://github.com/Blueturboguy07/cue/blob/main/main.js)).
+   Реплика закрывается по паузе ~800 мс, минимум длины (~0.5–0.8 с), RMS-gate от тишины,
+   принудительный флаш ~10 с для монологов без пауз. Фиксированный `FLUSH_MS` из
+   [cue/main.js](https://github.com/Blueturboguy07/cue/blob/main/main.js) не используется: половина окна уходила бы в задержку впустую.
 
 3. **STT**  
-   Локальный Whisper MLX на каждый канал независимо.
+   WhisperKit на каждый канал независимо (для англоязычных звонков — нативный `SpeechAnalyzer`).
 
 4. **Transcript**  
    ```swift
@@ -137,7 +154,9 @@ Fallback (опционально): ScreenCaptureKit system audio, если Proce
    ```
 
 5. **LLM**  
-   Промпт собирает размеченный диалог + опциональный скриншот.
+   Промпт собирает размеченный диалог, профиль пользователя и скриншот.  
+   Запуск автоматический — в момент, когда закрылась реплика `Them`.  
+   Новая реплика `Them` отменяет текущую генерацию и запускает новую; речь `You` не отменяет ничего.
 
 ---
 
@@ -163,9 +182,9 @@ Fallback (опционально): ScreenCaptureKit system audio, если Proce
 |-----------|------------|-----------|
 | UI | SwiftUI + AppKit | — |
 | Always-on-top + hide | `NSWindow` level, `sharingType = .none` | [cue](https://github.com/Blueturboguy07/cue) (`setContentProtection`) |
-| Them audio | Core Audio Process Tap | [CallCapture](https://github.com/bodharma/callcapture), [Recap](https://github.com/RecapAI/Recap), [AudioCap](https://github.com/insidegui/AudioCap), [Muesli](https://github.com/Muesli-HQ/muesli) |
-| You audio | AVAudioEngine | Scripta, Muesli, стандарт Apple |
-| STT | Whisper MLX (local) | mlx-swift / mlx-swift-audio ecosystem |
+| Them audio | Core Audio Process Tap (дефолт) + ScreenCaptureKit | [CallCapture](https://github.com/bodharma/callcapture), [Recap](https://github.com/RecapAI/Recap), [AudioCap](https://github.com/insidegui/AudioCap), [Muesli](https://github.com/Muesli-HQ/muesli) |
+| You audio | AVAudioEngine + VPIO | Scripta, Muesli, стандарт Apple |
+| STT | WhisperKit (CoreML/ANE) + `SpeechAnalyzer` для англ. | [argmax-oss-swift](https://github.com/jkrukowski/WhisperKit) |
 | OCR | Vision Framework | — |
 | LLM | Протокол + URLSession / local HTTP / CLI | идея фабрики как в [cue/src/llm.js](https://github.com/Blueturboguy07/cue/blob/main/src/llm.js) |
 | Min OS | macOS 14.4+ (Process Tap) | — |
@@ -191,7 +210,7 @@ GhostMeet/
 │   └── AudioBufferQueue.swift     # отдельные очереди you/them
 ├── Speech/
 │   ├── SpeechRecognitionService.swift
-│   ├── WhisperMLXRecognizer.swift
+│   ├── WhisperKitRecognizer.swift
 │   └── PartialResult.swift
 ├── Intelligence/
 │   ├── Context/
@@ -227,7 +246,12 @@ GhostMeet/
 
 <key>NSScreenCaptureUsageDescription</key>
 <string>Нужен для анализа экрана и режима «Реши задачу»</string>
+
+<key>NSSpeechRecognitionUsageDescription</key>
+<string>Нужен для распознавания речи через Apple Speech, если локальный Whisper недоступен</string>
 ```
+
+Реальный файл — [GhostMeet/Info.plist](../GhostMeet/Info.plist). Ключи `NSAudioCaptureUsageDescription` и `NSScreenCaptureUsageDescription` Xcode не знает, поэтому через `INFOPLIST_KEY_*` они молча теряются — только настоящий plist. macOS при этом не показывает пояснение к запросу Screen Recording: строка объявлена для полноты, но пользователь её не увидит.
 
 ---
 
@@ -250,41 +274,51 @@ GhostMeet/
 | | cue | GhostMeet |
 |--|-----|-----------|
 | Стек | Electron | Native Swift |
-| Them audio | getDisplayMedia loopback | Core Audio Process Tap |
-| STT | Облачный Whisper / Gemini | Локальный Whisper MLX |
+| Them audio | getDisplayMedia loopback | Core Audio Process Tap + ScreenCaptureKit |
+| STT | Облачный Whisper / Gemini | Локальный WhisperKit (+ нативный движок для англ.) |
+| Триггер подсказки | Хоткей | Автоматически, по паузе в речи собеседника |
 | LLM | OpenAI / Claude / Gemini | + Ollama, LM Studio, llama.cpp, CLI, Kimi… |
 | Контекст | Последние N реплик | N реплик + авто-саммари |
 | UI настройки | Базовые | Прозрачность, размер, профили |
 
 ---
 
+## Целевой сценарий
+
+MVP затачивается под **техническое интервью, где пользователь — кандидат**. Это самый жёсткий набор требований: задержка подсказки критична, режим «Реши задачу» становится основным, а не вспомогательным, и руки заняты — тянуться к хоткею в кадре заметно. Остальные сценарии (рабочие созвоны, роль интервьюера) получаются ослаблением этих требований, поэтому отдельно под них ничего не проектируется.
+
 ## MVP → v1
 
 ### MVP
-- [ ] Dual-channel: Mic (You) + Process Tap (Them)
-- [ ] Whisper MLX (базовый flush + RMS gate)
+- [ ] Dual-channel: Mic + VPIO (You) + Process Tap (Them) за общим протоколом захвата
+- [ ] WhisperKit с выбором модели; нарезка по паузе + RMS gate + страховочный флаш
 - [ ] Transcript You/Them
-- [ ] Один облачный LLM (Claude или OpenAI) + streaming
+- [ ] Один облачный LLM (Claude) + streaming
+- [ ] Автоматический запуск подсказки по паузе, отмена по новой реплике `Them`
+- [ ] Скриншот в каждом автоматическом запросе + OCR
 - [ ] Режимы Assist + What should I say + Solve on screen
-- [ ] Always-on-top + sharingType = .none
-- [ ] Базовые хоткеи
+- [ ] Профиль пользователя в system-промпте
+- [ ] Always-on-top + `sharingType = .none` + accessory-режим
+- [ ] Лента подсказок, индикатор состояния, паник-хоткей
 
 ### v1.0
+- [ ] ScreenCaptureKit как второй захват + автооткат при сбое тапа
+- [ ] `SpeechAnalyzer` как второй STT-движок для англоязычных звонков
 - [ ] Полный LLM router (Ollama, LM Studio, llama.cpp, CLI, Kimi…)
 - [ ] Контекст с саммаризацией
 - [ ] Прозрачность / ресайз / профили промптов
-- [ ] OCR + multimodal «Реши задачу»
+- [ ] Сохранение транскрипта на диск (опция, по умолчанию выключена)
 - [ ] Выбор процесса для тапа в UI
 
 ---
 
 ## Принципы
 
-1. **Два чистых канала** — модель всегда знает, кто говорил.
-2. **Минимальная задержка** — streaming на STT (по возможности) и на LLM.
-3. **Приватность** — STT локальный; LLM может быть полностью локальным.
-4. **Невидимость** — не мешать и не светиться в screen share.
-5. **Гибкость провайдеров** — любой бэкенд через один интерфейс.
+1. **Два чистых канала** — модель всегда знает, кто говорил. Канал определяется источником звука, а не смыслом сказанного.
+2. **Минимальная задержка** — подсказка приходит в паузу, а не через фиксированный интервал.
+3. **Приватность** — STT локальный; LLM может быть полностью локальным; на диск по умолчанию не пишется ничего.
+4. **Невидимость** — не мешать и не светиться в screen share (в границах [ADR-0004](adr/0004-invisibility-scope.md)).
+5. **Гибкость провайдеров** — любой бэкенд через один интерфейс, на каждом слое минимум две реализации ([ADR-0001](adr/0001-swappable-backends-behind-protocols.md)).
 
 ---
 

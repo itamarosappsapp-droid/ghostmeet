@@ -56,34 +56,45 @@ Four usage strings are declared: microphone (You channel), audio capture (Them c
 
 The app is currently **ad-hoc signed** (`CODE_SIGN_IDENTITY = -`, no team). TCC grants are keyed to the signature, so the ad-hoc identity changes across rebuilds and macOS may re-prompt or silently drop previously granted mic/audio/screen permissions. If permissions start behaving erratically during audio work, this is the first thing to check — switching to a stable Apple Development identity (set `DEVELOPMENT_TEAM`) fixes it. Hardened Runtime is off; if it is ever enabled, microphone access will additionally require the `com.apple.security.device.audio-input` entitlement.
 
-### Open decisions
-
-- **Dock icon vs. accessory app.** A hidden always-on-top copilot would normally run as an accessory (`LSUIElement = true` / `NSApplication.setActivationPolicy(.accessory)`), with no Dock icon and no app switcher entry. Not set — decide when building the window layer, since it also affects how the window takes focus.
-
 ## What GhostMeet is
 
 A macOS always-on-top overlay that assists during video calls (Meet, Telemost, Zoom, Teams). It listens to two audio channels, transcribes locally, and answers via pluggable LLMs — while staying invisible to screen sharing.
+
+**The MVP targets one scenario: a technical interview where the user is the candidate.** That is the tightest requirement set — latency is critical, `Solve on screen` is the primary mode rather than a bonus, and reaching for a hotkey on camera is conspicuous. Other scenarios are relaxations of it and are not designed for separately.
+
+## Where decisions live
+
+Design decisions from the grilling session are recorded, not just implied by the code — read them before reopening a settled question:
+
+- [CONTEXT.md](CONTEXT.md) — the glossary. `You`, `Them`, `Реплика`, `Подсказка`, `Профиль` have precise definitions; use those words and don't drift to synonyms.
+- [docs/adr/](docs/adr/) — [0001](docs/adr/0001-swappable-backends-behind-protocols.md) swappable backends, [0002](docs/adr/0002-stt-engine-choice.md) STT engine choice, [0003](docs/adr/0003-proactive-suggestion-loop.md) the proactive suggestion loop, [0004](docs/adr/0004-invisibility-scope.md) the limits of invisibility.
+
+The spec in `docs/` has been reconciled with these; where an older reference project (cue) disagrees, the ADRs win.
 
 ## Architecture invariants
 
 These are the decisions that shape everything else; changing one has ripple effects across the codebase.
 
-**Two channels never mix.** `You` (user mic, AVAudioEngine) and `Them` (call participants, **Core Audio Process Tap** on the meeting app's process) each get their own buffer, their own independent STT pass, and their own label in the transcript. The LLM always sees a speaker-labeled dialogue (`Them: …` / `You: …`) and infers from the system prompt whose side to answer for. Any change that risks the user's voice bleeding into `Them` breaks the core premise.
+**Two channels never mix.** `You` (user mic, AVAudioEngine **with VPIO enabled**) and `Them` (call participants, captured from the source app) each get their own buffer, their own independent STT pass, and their own label in the transcript. Channel membership is decided by *source*, never by meaning: everything from the mic is `You` even when the user reads someone else's question aloud. VPIO (`setVoiceProcessingEnabled`) is what stops the other party's voice leaking from the speakers into `You` — without it the transcript quietly corrupts and the LLM starts answering the wrong side.
 
-**Process Tap, not loopback.** Deliberately chosen over `getDisplayMedia` loopback (the approach cue uses): it captures only the selected process — no notifications or music — avoids loopback monitoring picking up the user's own voice, and needs only the narrower Audio Capture permission rather than Screen Recording. ScreenCaptureKit system audio is an optional fallback when Process Tap is unavailable.
+**Two implementations per external seam.** Capture, STT and LLM each have two or more backends behind one protocol, selectable in settings — see [ADR-0001](docs/adr/0001-swappable-backends-behind-protocols.md). Branching must not leak upward: `Speech` doesn't know where the audio came from, `Intelligence` doesn't know what transcribed it. Backends are built **one at a time** through the seam, not in parallel.
 
-**Local-first privacy.** STT is Whisper via MLX on-device (Apple Speech Framework as fallback); the LLM layer must support fully local providers (Ollama, LM Studio, llama.cpp server, MLX-LM) alongside cloud ones. BYOK, no backend server of our own — API keys live in Keychain only.
+**Process Tap is the default, not the only way.** Core Audio Process Tap ships first and stays the default (no video pipeline, keeps working if Screen Recording is revoked); ScreenCaptureKit is the second backend and the automatic fallback. Note the spec's original justification is partly obsolete: both APIs are **app-level**, neither isolates a browser tab, and Screen Recording is needed anyway because every suggestion carries a screenshot.
 
-**Invisibility.** The window uses `NSWindow` level + `collectionBehavior` for always-on-top and `sharingType = .none` (content protection) so it is excluded from screen capture. This assumes the user shares a *tab or window*, not the whole display.
+**Local-first privacy.** STT is on-device (see [ADR-0002](docs/adr/0002-stt-engine-choice.md) — **WhisperKit, not MLX**); the LLM layer must support fully local providers (Ollama, LM Studio, llama.cpp server, MLX-LM) alongside cloud ones. BYOK, no backend server of our own — API keys live in Keychain only. Nothing is written to disk unless the user turns it on.
+
+**Invisibility.** The window uses `NSWindow` level + `collectionBehavior` for always-on-top and `sharingType = .none` (content protection) so it is excluded from screen capture — including from our own screenshots, which is what keeps the model from seeing its previous answer. The app runs as an accessory (`LSUIElement`), and whole-display sharing is explicitly out of scope ([ADR-0004](docs/adr/0004-invisibility-scope.md)). Failures are surfaced **inside the window only** — a system notification banner would appear over the shared screen and give the app away.
 
 ### Audio → answer pipeline
 
-1. **Capture** — mic via AVAudioEngine; `Them` via Process Tap → Aggregate Device → IOProc
-2. **Buffer + gate** — separate `you`/`them` PCM queues; flush every ~3–4 s with a minimum length (~0.5–0.8 s) and an RMS silence gate, so silence never triggers an STT call
-3. **STT** — Whisper MLX per channel, independently
+1. **Capture** — mic via AVAudioEngine + VPIO; `Them` via Process Tap → Aggregate Device → IOProc (or SCK)
+2. **Buffer + gate** — separate `you`/`them` PCM queues; a turn closes after ~800 ms of silence, with a minimum length (~0.5–0.8 s), an RMS silence gate, and a ~10 s forced flush for pause-less monologues. The fixed 3–4 s flush cue uses is deliberately **not** used — half the window would be pure added latency
+3. **STT** — WhisperKit per channel, independently
 4. **Transcript** — append `Turn { channel, text, timestamp }`
-5. **Context** — sliding window of the last ~10–15 turns; older turns are compressed by the background Summarizer and injected into the system prompt
+5. **Context** — sliding window of the last ~10–15 turns; older turns are compressed by the background Summarizer and injected into the system prompt, along with the user's `Профиль` (experience, stack, role)
 6. **LLM** — one `LLMProvider` protocol behind an `LLMRouter`; cloud, local-HTTP, and CLI providers all conform to it. Streaming everywhere except the Summarizer.
+
+**The loop is proactive** ([ADR-0003](docs/adr/0003-proactive-suggestion-loop.md)): closing a `Them` turn fires steps 3–6 automatically, with a screenshot attached to *every* request. A new `Them` turn cancels the in-flight generation and restarts; `You` speech cancels nothing — the suggestion stays on screen as a crib until `Them` speaks again. Hotkeys are a secondary path, not the main one.
 
 The planned Swift file layout (`App/`, `UI/`, `Audio/`, `Speech/`, `Intelligence/{Context,LLM,Screen}/`, `Input/`, `Settings/`, `Utilities/`) is in [docs/GhostMeet.md](docs/GhostMeet.md) — follow it when creating files rather than inventing a new structure.
 
@@ -97,6 +108,7 @@ Cross-cutting rules from that file that are easy to get wrong:
 - Don't force Russian: response language follows the language of the Them/You turns or the user's question
 - Different modes read different transcript window sizes (12 / 14 / 20 / all) and different max-token budgets (256–512 for Say/Follow-up, 2k–4k for Solve/Assist)
 - Multimodal modes (Assist, Ask, Solve on screen) attach the screenshot to the *user* message; Solve additionally passes Vision-framework OCR text
+- The optional `resume_context` block at the end of that file is **not optional here** — it carries the user's `Профиль` and ships in the MVP. Without it the model suggests experience the user doesn't have, which is a worse failure than a slow answer
 
 ## Permissions
 
