@@ -69,29 +69,39 @@ struct SettingsTurnSegmentationTests {
 
     @Test("Значения по умолчанию соответствуют спеке")
     func defaultsMatchSpec() {
-        let settings = TurnSegmentationSettings.default
+        let settings = TurnSegmentationConfig.default
 
         #expect(settings.pauseThreshold == 0.8)
-        #expect(TurnSegmentationSettings.minimumTurnDurationRange.contains(settings.minimumTurnDuration))
+        #expect(TurnSegmentationConfig.minimumTurnDurationRange.contains(settings.minimumTurnDuration))
         #expect((0.5...0.8).contains(settings.minimumTurnDuration))
         #expect(settings.safetyFlushInterval == 10)
-        #expect(settings.rmsGateThreshold > 0)
+        #expect(settings.silenceGateRMS > 0)
     }
 
-    @Test("Настроенные пороги доезжают до движка, а не остаются в настройках")
-    func settingsReachTheEngineConfig() {
-        let settings = TurnSegmentationSettings(
+    @Test("Пороги переживают запись и чтение, а служебный тик движка не сохраняется")
+    func thresholdsSurviveStorageWithoutEngineInternals() {
+        let tuned = TurnSegmentationConfig(
             pauseThreshold: 1.2,
             minimumTurnDuration: 0.5,
+            silenceGateRMS: 0.05,
             safetyFlushInterval: 15,
-            rmsGateThreshold: 0.05
+            pauseCheckInterval: 0.42
         )
-        let config = settings.engineConfig
 
-        #expect(config.pauseThreshold == 1.2)
-        #expect(config.minimumTurnDuration == 0.5)
-        #expect(config.forcedFlushInterval == 15)
-        #expect(config.silenceGateRMS == 0.05)
+        let stored = try! JSONEncoder().encode(tuned)
+        let restored = try! JSONDecoder().decode(TurnSegmentationConfig.self, from: stored)
+
+        // Everything the user tunes survives the round trip …
+        #expect(restored.pauseThreshold == 1.2)
+        #expect(restored.minimumTurnDuration == 0.5)
+        #expect(restored.safetyFlushInterval == 15)
+        #expect(restored.silenceGateRMS == 0.05)
+
+        // … while the engine's internal tick is never persisted, so a
+        // hand-edited preferences file cannot stall the pipeline with it.
+        #expect(restored.pauseCheckInterval == TurnSegmentationConfig.default.pauseCheckInterval)
+        let asText = String(data: stored, encoding: .utf8) ?? ""
+        #expect(!asText.contains("pauseCheckInterval"))
     }
 
     @Test("Свежее хранилище отдаёт пороги по умолчанию")
@@ -109,14 +119,14 @@ struct SettingsTurnSegmentationTests {
             first.turnSegmentation.pauseThreshold = 1.2
             first.turnSegmentation.minimumTurnDuration = 0.5
             first.turnSegmentation.safetyFlushInterval = 15
-            first.turnSegmentation.rmsGateThreshold = 0.05
+            first.turnSegmentation.silenceGateRMS = 0.05
 
             // A second store over the same defaults stands in for a relaunch.
             let second = SettingsStore(defaults: defaults, secrets: InMemorySecretStore())
             #expect(second.turnSegmentation.pauseThreshold == 1.2)
             #expect(second.turnSegmentation.minimumTurnDuration == 0.5)
             #expect(second.turnSegmentation.safetyFlushInterval == 15)
-            #expect(second.turnSegmentation.rmsGateThreshold == 0.05)
+            #expect(second.turnSegmentation.silenceGateRMS == 0.05)
         }
     }
 
@@ -136,19 +146,19 @@ struct SettingsTurnSegmentationTests {
     @Test("Значения вне допустимого диапазона подрезаются при загрузке")
     func decodedThresholdsAreClamped() {
         withTemporaryDefaults { defaults in
-            let broken = TurnSegmentationSettings(
+            let broken = TurnSegmentationConfig(
                 pauseThreshold: 0,
                 minimumTurnDuration: 99,
-                safetyFlushInterval: 0,
-                rmsGateThreshold: -1
+                silenceGateRMS: -1,
+                safetyFlushInterval: 0
             )
             defaults.set(try? JSONEncoder().encode(broken), forKey: "settings.turnSegmentation")
 
             let store = SettingsStore(defaults: defaults, secrets: InMemorySecretStore())
-            #expect(store.turnSegmentation.pauseThreshold == TurnSegmentationSettings.pauseThresholdRange.lowerBound)
-            #expect(store.turnSegmentation.minimumTurnDuration == TurnSegmentationSettings.minimumTurnDurationRange.upperBound)
-            #expect(store.turnSegmentation.safetyFlushInterval == TurnSegmentationSettings.safetyFlushIntervalRange.lowerBound)
-            #expect(store.turnSegmentation.rmsGateThreshold == TurnSegmentationSettings.rmsGateThresholdRange.lowerBound)
+            #expect(store.turnSegmentation.pauseThreshold == TurnSegmentationConfig.pauseThresholdRange.lowerBound)
+            #expect(store.turnSegmentation.minimumTurnDuration == TurnSegmentationConfig.minimumTurnDurationRange.upperBound)
+            #expect(store.turnSegmentation.safetyFlushInterval == TurnSegmentationConfig.safetyFlushIntervalRange.lowerBound)
+            #expect(store.turnSegmentation.silenceGateRMS == TurnSegmentationConfig.silenceGateRMSRange.lowerBound)
         }
     }
 

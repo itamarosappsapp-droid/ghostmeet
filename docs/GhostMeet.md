@@ -53,7 +53,7 @@ Them: А почему не Mongo?
 - `SFSpeechRecognizer` — аварийный запасной путь; русский поддерживает.
 - MLX как рантайм для Whisper **отклонён**: под Swift экосистема сырая.
 
-Нарезка на реплики — не по таймеру, а по паузе: реплика закрывается после ~800 мс тишины в канале, и тогда же стартуют распознавание и запрос к модели. Страховочный принудительный флаш ~10 с нужен для монологов без внятных пауз. RMS-gate против тишины остаётся.
+Нарезка на реплики — не по таймеру, а по паузе: реплика закрывается после ~800 мс тишины в канале, и тогда же стартуют распознавание и запрос к модели. Страховочный флаш ~10 с нужен для монологов без внятных пауз. RMS-gate против тишины остаётся.
 
 ### LLM (подключаемые провайдеры)
 
@@ -184,7 +184,7 @@ Them: А почему не Mongo?
 | Always-on-top + hide | `NSWindow` level, `sharingType = .none` | [cue](https://github.com/Blueturboguy07/cue) (`setContentProtection`) |
 | Them audio | Core Audio Process Tap (дефолт) + ScreenCaptureKit | [CallCapture](https://github.com/bodharma/callcapture), [Recap](https://github.com/RecapAI/Recap), [AudioCap](https://github.com/insidegui/AudioCap), [Muesli](https://github.com/Muesli-HQ/muesli) |
 | You audio | AVAudioEngine + VPIO | Scripta, Muesli, стандарт Apple |
-| STT | WhisperKit (CoreML/ANE) + `SpeechAnalyzer` для англ. | [argmax-oss-swift](https://github.com/jkrukowski/WhisperKit) |
+| STT | WhisperKit (CoreML/ANE) + `SpeechAnalyzer` для англ. | [argmax-oss-swift](https://github.com/argmaxinc/argmax-oss-swift) |
 | OCR | Vision Framework | — |
 | LLM | Протокол + URLSession / local HTTP / CLI | идея фабрики как в [cue/src/llm.js](https://github.com/Blueturboguy07/cue/blob/main/src/llm.js) |
 | Min OS | macOS 14.4+ (Process Tap) | — |

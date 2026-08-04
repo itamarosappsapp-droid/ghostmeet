@@ -21,7 +21,7 @@ nonisolated struct TurnSegmentationConfig: Equatable, Sendable {
     var silenceGateRMS: Float
     /// A turn is closed after this long even without any pause, so that a
     /// monologue reaches the transcript in pieces instead of after two minutes.
-    var forcedFlushInterval: TimeInterval
+    var safetyFlushInterval: TimeInterval
     /// How often the engine re-checks pauses while no audio arrives, so that a
     /// stalled source cannot keep a turn open forever.
     var pauseCheckInterval: TimeInterval
@@ -30,13 +30,13 @@ nonisolated struct TurnSegmentationConfig: Equatable, Sendable {
         pauseThreshold: TimeInterval = 0.8,
         minimumTurnDuration: TimeInterval = 0.6,
         silenceGateRMS: Float = 0.01,
-        forcedFlushInterval: TimeInterval = 10,
+        safetyFlushInterval: TimeInterval = 10,
         pauseCheckInterval: TimeInterval = 0.1
     ) {
         self.pauseThreshold = pauseThreshold
         self.minimumTurnDuration = minimumTurnDuration
         self.silenceGateRMS = silenceGateRMS
-        self.forcedFlushInterval = forcedFlushInterval
+        self.safetyFlushInterval = safetyFlushInterval
         self.pauseCheckInterval = pauseCheckInterval
     }
 
@@ -107,7 +107,7 @@ nonisolated final class TurnSegmenter {
         let silenceSoFar = time - lastVoiceEndedAt
         let lengthSoFar = time - startedAt
         let pauseIsLongEnough = silenceSoFar >= config.pauseThreshold
-        let speechRanTooLong = lengthSoFar >= config.forcedFlushInterval
+        let speechRanTooLong = lengthSoFar >= config.safetyFlushInterval
         guard pauseIsLongEnough || speechRanTooLong else { return nil }
         return close()
     }

@@ -14,12 +14,16 @@ struct GhostMeetApp: App {
     @NSApplicationDelegateAdaptor(GhostMeetAppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        // The overlay itself is not a SwiftUI scene: a `WindowGroup` cannot express a
-        // non-activating panel with `sharingType = .none`, so it is built in AppKit by
+        // Neither window of the app is a SwiftUI scene.
+        //
+        // The overlay cannot be one: a `WindowGroup` cannot express a non-activating
+        // panel with `sharingType = .none`, so it is built in AppKit by
         // `OverlayWindowController` from the app delegate.
         //
-        // TODO(06 — Настройки и Keychain): put the settings UI here instead of EmptyView.
-        // In accessory mode there is no menu bar, so it has to be opened programmatically.
+        // The settings window is not one either: in accessory mode there is no menu
+        // bar, so this `Settings` scene has no item to be opened from. It stays as an
+        // empty placeholder — `SettingsWindowController` puts `SettingsView` on screen
+        // when the user presses the gear in the overlay.
         Settings {
             EmptyView()
         }
@@ -31,7 +35,30 @@ struct GhostMeetApp: App {
 /// app, so the keyboard focus stays with the call or the editor.
 final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
 
-    private let overlayWindowController = OverlayWindowController()
+    /// The one settings store of the app: the profile, the thresholds and the
+    /// presence of the provider key.
+    private let settings = SettingsStore.shared
+
+    /// Model choice and download progress of the recogniser. Shared between the
+    /// session, which transcribes with it, and the settings screen, which picks
+    /// the model and shows how far its download has got.
+    private let recognition = SpeechModelStatus.shared
+
+    /// The one session: microphone in, transcript out.
+    private lazy var session = SessionController.microphone(
+        settings: settings,
+        recognizer: recognition.recognizer
+    )
+
+    private lazy var settingsWindowController = SettingsWindowController(
+        store: settings,
+        recognition: recognition
+    )
+
+    private lazy var overlayWindowController = OverlayWindowController(
+        session: session,
+        openSettings: { [weak self] in self?.settingsWindowController.show() }
+    )
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Set before the first window appears, otherwise the Dock icon flashes.
@@ -43,6 +70,13 @@ final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Thresholds edited in the settings window reach the engine on their own
+        // from here on; nothing else has to know a change happened.
+        session.followThresholds(of: settings)
+
+        // Listening is not started here on purpose: the microphone prompt would
+        // come up before the user has asked for anything, and the first thing
+        // they see would be a permission dialog rather than the overlay.
         overlayWindowController.show()
     }
 

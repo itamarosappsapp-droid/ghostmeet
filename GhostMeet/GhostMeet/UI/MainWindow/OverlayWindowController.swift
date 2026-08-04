@@ -20,14 +20,27 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
         didSet { applyOpacity() }
     }
 
+    /// The session the overlay shows and drives. The controller only passes it
+    /// on to the content view; window geometry and the session know nothing of
+    /// each other.
+    private let session: SessionController
+
+    /// Opening the settings window is somebody else's job — the overlay only
+    /// has the button. In accessory mode there is no menu bar to put it in.
+    private let openSettings: () -> Void
+
     private let configuration: OverlayWindowConfiguration
     private let stateStore: WindowStateStore
     private var panel: OverlayPanel?
 
     init(
+        session: SessionController,
+        openSettings: @escaping () -> Void,
         configuration: OverlayWindowConfiguration = .overlay,
         stateStore: WindowStateStore = WindowStateStore()
     ) {
+        self.session = session
+        self.openSettings = openSettings
         self.configuration = configuration
         self.stateStore = stateStore
         self.opacity = configuration.clampOpacity(stateStore.opacity ?? configuration.defaultOpacity)
@@ -78,7 +91,9 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
         configuration.apply(to: panel)
         panel.delegate = self
 
-        let hostingView = NSHostingView(rootView: ContentView(controller: self))
+        let hostingView = NSHostingView(
+            rootView: ContentView(controller: self, session: session, openSettings: openSettings)
+        )
         // Empty sizing options: otherwise the hosting view imposes the SwiftUI
         // content's ideal size on the window and overrides the restored frame.
         hostingView.sizingOptions = []

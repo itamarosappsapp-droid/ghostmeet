@@ -62,7 +62,9 @@ plutil -p ~/Library/Developer/Xcode/DerivedData/GhostMeet-*/Build/Products/Debug
 - **App Sandbox is off** (`ENABLE_APP_SANDBOX = NO`). Deliberate: this is a local BYOK app that needs Process Tap and screen capture, not an App Store build.
 - **All usage-description strings live in `SRCROOT/Info.plist`**, merged with the generated plist (`GENERATE_INFOPLIST_FILE` stays `YES`). Add new ones there, not as build settings — **`INFOPLIST_KEY_*` only works for keys Xcode knows**, and unknown ones like `NSAudioCaptureUsageDescription` / `NSScreenCaptureUsageDescription` are *silently dropped*: the build succeeds and the key simply never reaches the bundle. Always confirm with the `plutil` command above rather than trusting `-showBuildSettings`.
 - **`Info.plist` must stay outside `GhostMeet/GhostMeet/`.** That folder is a `PBXFileSystemSynchronizedRootGroup` — anything inside is picked up automatically, and a plist there gets copied into `Contents/Resources/` as a stray duplicate. Same trap applies to any other non-source file.
-- Because the source group is file-system-synchronized, **new `.swift` files are added to the target just by creating them on disk** — no pbxproj edit needed.
+- Because the source group is file-system-synchronized, **new `.swift` files are added to the target just by creating them on disk** — no pbxproj edit needed. Adding an SPM dependency, a target, or a scheme still means editing `project.pbxproj` by hand.
+- **Give every concurrent build its own `-derivedDataPath`.** Parallel agents sharing the default DerivedData corrupt each other's builds.
+- `SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY` is on, so `CGRect` / `CGSize` need an explicit `import CoreGraphics` even where `Foundation` is already imported. A standalone `swiftc -typecheck` without the flag will not reproduce the error.
 
 ### Permissions and TCC
 

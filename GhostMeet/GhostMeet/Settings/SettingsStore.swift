@@ -36,6 +36,7 @@ final class SettingsStore {
     private enum DefaultsKey {
         static let profile = "settings.userProfile"
         static let turnSegmentation = "settings.turnSegmentation"
+        static let speechModel = "settings.speechModel"
     }
 
     // MARK: - Persisted, user-scoped state
@@ -47,8 +48,15 @@ final class SettingsStore {
     }
 
     /// Thresholds handed to `SessionEngine` as configuration.
-    var turnSegmentation: TurnSegmentationSettings {
+    var turnSegmentation: TurnSegmentationConfig {
         didSet { persist(turnSegmentation, forKey: DefaultsKey.turnSegmentation) }
+    }
+
+    /// Which local model recognises speech. Belongs to the user rather than to a
+    /// call: the model is downloaded once and reused across every session, so a
+    /// choice made before an interview must still be there at the next one.
+    var speechModel: WhisperModel {
+        didSet { persist(speechModel, forKey: DefaultsKey.speechModel) }
     }
 
     // MARK: - Secret status (never the secret itself)
@@ -74,10 +82,14 @@ final class SettingsStore {
         self.profile = Self.decode(UserProfile.self, from: defaults, key: DefaultsKey.profile)
             ?? .empty
         self.turnSegmentation = (Self.decode(
-            TurnSegmentationSettings.self,
+            TurnSegmentationConfig.self,
             from: defaults,
             key: DefaultsKey.turnSegmentation
         ) ?? .default).clamped()
+        // An unknown or hand-edited value falls back to the default instead of
+        // leaving the app with no model at all.
+        self.speechModel = Self.decode(WhisperModel.self, from: defaults, key: DefaultsKey.speechModel)
+            ?? .default
         refreshProviderKeyPresence()
     }
 

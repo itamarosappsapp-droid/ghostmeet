@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		7A1100000000000000000012 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 7A1100000000000000000011 /* WhisperKit */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		7A110000000000000000000B /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -46,6 +50,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7A1100000000000000000012 /* WhisperKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -113,6 +118,7 @@
 			);
 			name = GhostMeet;
 			packageProductDependencies = (
+				7A1100000000000000000011 /* WhisperKit */,
 			);
 			productName = GhostMeet;
 			productReference = 95F66DAE3020DD0C0083906F /* GhostMeet.app */;
@@ -146,6 +152,9 @@
 			);
 			mainGroup = 95F66DA53020DD0C0083906F;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				7A1100000000000000000010 /* XCRemoteSwiftPackageReference "argmax-oss-swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 95F66DAF3020DD0C0083906F /* Products */;
 			projectDirPath = "";
@@ -441,6 +450,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		7A1100000000000000000010 /* XCRemoteSwiftPackageReference "argmax-oss-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/argmaxinc/argmax-oss-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		7A1100000000000000000011 /* WhisperKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7A1100000000000000000010 /* XCRemoteSwiftPackageReference "argmax-oss-swift" */;
+			productName = WhisperKit;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 95F66DA63020DD0C0083906F /* Project object */;
 }
