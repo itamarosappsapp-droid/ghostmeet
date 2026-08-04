@@ -14,7 +14,7 @@ import Observation
 /// in the recogniser (so it is true even when no window is open). This type
 /// mirrors the phase onto the main actor and writes the choice through.
 ///
-/// Its `recognizer` is what the app hands to `SessionController.microphone`;
+/// Its `recognizer` is what the app hands to `SessionController.dualChannel`;
 /// from there down everything sees `SpeechRecognizer` and nothing else.
 @MainActor
 @Observable

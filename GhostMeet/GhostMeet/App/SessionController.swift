@@ -34,6 +34,9 @@ final class SessionController {
     /// keeps no direct knowledge of `AVFoundation`.
     @ObservationIgnored private let requestMicrophoneAccess: () async -> Bool
 
+    /// The start currently in flight, kept so that it can be waited for.
+    @ObservationIgnored private var startTask: Task<Void, Never>?
+
     init(
         engine: SessionEngine,
         requestMicrophoneAccess: @escaping () async -> Bool = { await MicCaptureService.requestAccess() }
@@ -65,7 +68,7 @@ final class SessionController {
         guard !isListening, !isStarting else { return }
         failure = nil
         isStarting = true
-        Task { [weak self] in
+        startTask = Task { [weak self] in
             guard let self else { return }
             let granted = await requestMicrophoneAccess()
             isStarting = false
@@ -79,6 +82,16 @@ final class SessionController {
                 failure = .captureFailed(error.localizedDescription)
             }
         }
+    }
+
+    /// Waits for a start that has already been asked for.
+    ///
+    /// Permission is an asynchronous round trip through the system, so whoever
+    /// needs to know how it ended — a test, later the hotkey path — has to be
+    /// able to wait for it instead of sleeping. Mirrors
+    /// `SessionEngine.waitForRecognition()`.
+    func waitForStart() async {
+        await startTask?.value
     }
 
     /// Stops capture and closes the turn that was in progress.
@@ -132,21 +145,26 @@ extension SessionController {
         var isPermissionDenied: Bool { self == .microphoneDenied }
     }
 
-    /// The session the app actually runs: microphone in, thresholds as the user
-    /// set them, recognition as the settings screen selected it.
+    /// The session the app actually runs: both channels in, thresholds as the
+    /// user set them, recognition as the settings screen selected it.
     ///
-    /// This is the one place where the concrete capture and the concrete
+    /// This is the one place where the concrete captures and the concrete
     /// recogniser meet. Everything below it sees `AudioSource` and
-    /// `SpeechRecognizer` only, so `Them` joins later as a second source and a
-    /// different engine as a different recogniser, without this signature or the
-    /// engine changing.
-    static func microphone(
+    /// `SpeechRecognizer` only, so a second capture backend or a different
+    /// recogniser arrives without this signature or the engine changing.
+    ///
+    /// `Them` follows the settings screen on its own: re-pointing the tap at
+    /// another application mid-call needs no restart of the session.
+    static func dualChannel(
         settings: SettingsStore,
         recognizer: SpeechRecognizer
     ) -> SessionController {
-        SessionController(
+        let them = ProcessTapCaptureService()
+        them.followSourceSelection(of: settings)
+
+        return SessionController(
             engine: SessionEngine(
-                sources: [MicCaptureService()],
+                sources: [MicCaptureService(), them],
                 recognizer: recognizer,
                 config: settings.turnSegmentation
             )

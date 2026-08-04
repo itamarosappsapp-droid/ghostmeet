@@ -37,6 +37,7 @@ final class SettingsStore {
         static let profile = "settings.userProfile"
         static let turnSegmentation = "settings.turnSegmentation"
         static let speechModel = "settings.speechModel"
+        static let themSourceApplication = "settings.themSourceApplication"
     }
 
     // MARK: - Persisted, user-scoped state
@@ -57,6 +58,24 @@ final class SettingsStore {
     /// choice made before an interview must still be there at the next one.
     var speechModel: WhisperModel {
         didSet { persist(speechModel, forKey: DefaultsKey.speechModel) }
+    }
+
+    /// Stable id of the application whose sound becomes the `Them` channel, or
+    /// `nil` while none has been picked.
+    ///
+    /// An id and not a process: a browser plays the call from a helper process
+    /// that gets a new PID on every launch, so anything narrower than the
+    /// application would stop pointing at it after the first restart. Persisted
+    /// because the same browser is used call after call — this is picked once,
+    /// not before every interview.
+    var themSourceApplicationID: String? {
+        didSet {
+            if let id = themSourceApplicationID, !id.isEmpty {
+                defaults.set(id, forKey: DefaultsKey.themSourceApplication)
+            } else {
+                defaults.removeObject(forKey: DefaultsKey.themSourceApplication)
+            }
+        }
     }
 
     // MARK: - Secret status (never the secret itself)
@@ -90,6 +109,7 @@ final class SettingsStore {
         // leaving the app with no model at all.
         self.speechModel = Self.decode(WhisperModel.self, from: defaults, key: DefaultsKey.speechModel)
             ?? .default
+        self.themSourceApplicationID = defaults.string(forKey: DefaultsKey.themSourceApplication)
         refreshProviderKeyPresence()
     }
 

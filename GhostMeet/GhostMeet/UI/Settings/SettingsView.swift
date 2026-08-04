@@ -25,15 +25,22 @@ struct SettingsView: View {
     /// reaches the keychain so the secret does not linger in view state.
     @State private var providerKeyDraft: String = ""
 
+    /// Which applications can be tapped right now. Owned by the screen rather
+    /// than passed in: it is a live reading of the system, not a setting, and
+    /// what capture actually shares with it is only the stored id.
+    @State private var catalog = SourceApplicationCatalog()
+
     var body: some View {
         Form {
             profileSection
+            sourceApplicationSection
             recognitionSection
             providerKeySection
             segmentationSection
         }
         .formStyle(.grouped)
-        .frame(minWidth: 480, minHeight: 560)
+        .frame(minWidth: 480, minHeight: 620)
+        .onAppear { catalog.startTracking() }
     }
 
     // MARK: - Profile
@@ -66,6 +73,78 @@ struct SettingsView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    // MARK: - Source application
+
+    /// Which application's sound becomes the `Them` channel.
+    ///
+    /// The list is applications, never windows or tabs, because that is the
+    /// finest granularity any capture API on macOS offers. The footnotes say so
+    /// outright: promising a single tab here would be a promise the tap cannot
+    /// keep.
+    private var sourceApplicationSection: some View {
+        Section("Приложение-источник") {
+            Picker("Слушать", selection: sourceSelection) {
+                Text("Не выбрано").tag(String?.none)
+                ForEach(catalog.applications) { application in
+                    Text(application.isPlayingAudio ? "\(application.name) · звучит" : application.name)
+                        .tag(String?.some(application.id))
+                }
+                // A source picked earlier keeps its place in the list even while
+                // its application is closed — otherwise reopening the settings
+                // before the browser is up would silently drop the choice.
+                if let missing = missingSelection {
+                    Text("\(missing) · не запущено").tag(String?.some(missing))
+                }
+            }
+
+            HStack {
+                Text(selectionSummary)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Обновить список") { catalog.refresh() }
+            }
+
+            Text("Звук берётся с приложения целиком: отделить вкладку со звонком от остальных вкладок браузера нельзя, поэтому всё, что играет в том же приложении, попадёт в канал Them.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            Text("Выбирайте сам браузер, а не вспомогательный процесс: звук звонка отдаёт один из его помощников, и после перезапуска браузера это уже другой процесс. GhostMeet слушает все процессы приложения сразу и находит их заново.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            Text("Если реплики собеседника не появляются, проверьте «Системные настройки» → «Конфиденциальность и безопасность» → «Запись экрана и звука системы»: без этого разрешения захват идёт, но приходит тишина.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var sourceSelection: Binding<String?> {
+        Binding(
+            get: { store.themSourceApplicationID },
+            set: { store.themSourceApplicationID = $0 }
+        )
+    }
+
+    /// The stored choice when its application is not in the list right now.
+    private var missingSelection: String? {
+        guard let id = store.themSourceApplicationID,
+              catalog.application(withID: id) == nil else { return nil }
+        return id
+    }
+
+    private var selectionSummary: String {
+        guard let id = store.themSourceApplicationID else {
+            return "Канал Them молчит, пока источник не выбран."
+        }
+        guard let application = catalog.application(withID: id) else {
+            return "Приложение не запущено — захват включится сам, когда оно вернётся."
+        }
+        return application.isPlayingAudio
+            ? "Приложение сейчас выдаёт звук."
+            : "Приложение запущено, но пока молчит."
     }
 
     // MARK: - Recognition

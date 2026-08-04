@@ -35,17 +35,25 @@ struct GhostMeetApp: App {
 /// app, so the keyboard focus stays with the call or the editor.
 final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
 
+    /// Where everything the app remembers is written.
+    ///
+    /// The user's own domain for an ordinary launch, a throwaway one when the
+    /// process was started by the test runner — see `AppDefaults`. Every store
+    /// below is built on this one value, which is what keeps a test run out of
+    /// the user's window geometry and settings.
+    private let defaults = AppDefaults.forCurrentProcess()
+
     /// The one settings store of the app: the profile, the thresholds and the
     /// presence of the provider key.
-    private let settings = SettingsStore.shared
+    private lazy var settings = SettingsStore(defaults: defaults)
 
     /// Model choice and download progress of the recogniser. Shared between the
     /// session, which transcribes with it, and the settings screen, which picks
     /// the model and shows how far its download has got.
-    private let recognition = SpeechModelStatus.shared
+    private lazy var recognition = SpeechModelStatus(store: settings)
 
     /// The one session: microphone in, transcript out.
-    private lazy var session = SessionController.microphone(
+    private lazy var session = SessionController.dualChannel(
         settings: settings,
         recognizer: recognition.recognizer
     )
@@ -57,7 +65,8 @@ final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
 
     private lazy var overlayWindowController = OverlayWindowController(
         session: session,
-        openSettings: { [weak self] in self?.settingsWindowController.show() }
+        openSettings: { [weak self] in self?.settingsWindowController.show() },
+        stateStore: WindowStateStore(defaults: defaults)
     )
 
     func applicationWillFinishLaunching(_ notification: Notification) {
