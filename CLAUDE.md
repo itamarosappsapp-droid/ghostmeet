@@ -34,7 +34,21 @@ xcodebuild -project GhostMeet.xcodeproj -scheme GhostMeet -configuration Debug b
 xcodebuild -project GhostMeet.xcodeproj -showBuildSettings -target GhostMeet
 ```
 
-No test target exists yet, so there is no `test` command. When one is added, document how to run a single test here.
+Run the whole suite (Swift Testing, target `GhostMeetTests`):
+
+```bash
+xcodebuild -project GhostMeet.xcodeproj -scheme GhostMeet -destination 'platform=macOS' test
+```
+
+Run a single test — `-only-testing:` takes `Target/Suite/testFunction`:
+
+```bash
+xcodebuild -project GhostMeet.xcodeproj -scheme GhostMeet -destination 'platform=macOS' test -only-testing:GhostMeetTests/SkeletonTests/testBundleIsWired
+```
+
+The scheme is **shared** (`xcshareddata/xcschemes/GhostMeet.xcscheme`) and committed — it lists the test target under both the build and test actions. Don't rely on Xcode's auto-created scheme; it lives in `xcuserdata`, which is gitignored.
+
+When several builds run at once (parallel agents), give each its own `-derivedDataPath` — concurrent builds sharing the default DerivedData corrupt each other.
 
 Verify what actually landed in the app bundle after touching Info.plist or deployment settings:
 

@@ -1,0 +1,145 @@
+//
+//  OverlayWindowController.swift
+//  GhostMeet
+//
+
+import AppKit
+import Combine
+import SwiftUI
+
+/// Owns the overlay panel: builds it from `OverlayWindowConfiguration`, restores its
+/// geometry and opacity, and writes them back when the user moves, resizes or dims it.
+///
+/// The controller never calls `NSApp.activate(...)` and never uses
+/// `makeKeyAndOrderFront(_:)` — that, together with `.nonactivatingPanel` and the
+/// accessory activation policy, is what keeps the typing focus in the call.
+final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegate {
+
+    /// Window opacity, bound to the slider in `ContentView`.
+    @Published var opacity: Double {
+        didSet { applyOpacity() }
+    }
+
+    private let configuration: OverlayWindowConfiguration
+    private let stateStore: WindowStateStore
+    private var panel: OverlayPanel?
+
+    init(
+        configuration: OverlayWindowConfiguration = .overlay,
+        stateStore: WindowStateStore = WindowStateStore()
+    ) {
+        self.configuration = configuration
+        self.stateStore = stateStore
+        self.opacity = configuration.clampOpacity(stateStore.opacity ?? configuration.defaultOpacity)
+        super.init()
+    }
+
+    // MARK: - What the content view is allowed to read
+
+    var opacityRange: ClosedRange<Double> { configuration.opacityRange }
+
+    var cornerRadius: CGFloat { configuration.cornerRadius }
+
+    var isVisible: Bool { panel?.isVisible ?? false }
+
+    // MARK: - Visibility
+
+    /// Puts the overlay on screen **without** activating GhostMeet.
+    func show() {
+        loadedPanel().orderFrontRegardless()
+    }
+
+    /// Takes the overlay off screen. Nothing else stops: this is only the window.
+    func hide() {
+        panel?.orderOut(nil)
+    }
+
+    /// Backing action for the show/hide (panic) hotkey — ticket 10.
+    func toggleVisibility() {
+        isVisible ? hide() : show()
+    }
+
+    // MARK: - Panel construction
+
+    private func loadedPanel() -> OverlayPanel {
+        if let panel { return panel }
+        let created = makePanel()
+        panel = created
+        return created
+    }
+
+    private func makePanel() -> OverlayPanel {
+        let panel = OverlayPanel(
+            contentRect: CGRect(origin: .zero, size: configuration.defaultContentSize),
+            styleMask: configuration.styleMask,
+            backing: .buffered,
+            defer: false
+        )
+        configuration.apply(to: panel)
+        panel.delegate = self
+
+        let hostingView = NSHostingView(rootView: ContentView(controller: self))
+        // Empty sizing options: otherwise the hosting view imposes the SwiftUI
+        // content's ideal size on the window and overrides the restored frame.
+        hostingView.sizingOptions = []
+        panel.contentView = hostingView
+
+        restoreGeometry(of: panel)
+        panel.alphaValue = CGFloat(configuration.clampOpacity(opacity))
+        return panel
+    }
+
+    // MARK: - Geometry and opacity persistence
+
+    private func restoreGeometry(of panel: OverlayPanel) {
+        if let stored = stateStore.frame, isOnSomeScreen(stored) {
+            panel.setFrame(stored, display: false)
+        } else {
+            panel.setContentSize(configuration.defaultContentSize)
+            placeInDefaultCorner(panel)
+        }
+    }
+
+    /// A frame saved on a monitor that is no longer attached would put the overlay
+    /// out of reach, so it is discarded in favour of the default position.
+    private func isOnSomeScreen(_ frame: CGRect) -> Bool {
+        NSScreen.screens.contains { $0.visibleFrame.intersects(frame) }
+    }
+
+    /// Top-right corner: out of the way of the call window and of a shared editor.
+    private func placeInDefaultCorner(_ panel: OverlayPanel) {
+        guard let screen = NSScreen.main else {
+            panel.center()
+            return
+        }
+        let visible = screen.visibleFrame
+        let size = panel.frame.size
+        panel.setFrameOrigin(
+            CGPoint(
+                x: visible.maxX - size.width - configuration.screenMargin,
+                y: visible.maxY - size.height - configuration.screenMargin
+            )
+        )
+    }
+
+    private func applyOpacity() {
+        let clamped = configuration.clampOpacity(opacity)
+        panel?.alphaValue = CGFloat(clamped)
+        stateStore.opacity = clamped
+    }
+
+    private func persistFrame() {
+        guard let panel, panel.isVisible else { return }
+        stateStore.frame = panel.frame
+    }
+
+    // MARK: - NSWindowDelegate
+
+    func windowDidMove(_ notification: Notification) {
+        persistFrame()
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        persistFrame()
+    }
+}

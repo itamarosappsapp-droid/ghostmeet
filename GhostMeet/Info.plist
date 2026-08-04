@@ -10,5 +10,7 @@
 	<string>Нужен для анализа экрана и режима «Реши задачу»</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Нужен для распознавания речи через Apple Speech, если локальный Whisper недоступен</string>
+	<key>LSUIElement</key>
+	<true/>
 </dict>
 </plist>
