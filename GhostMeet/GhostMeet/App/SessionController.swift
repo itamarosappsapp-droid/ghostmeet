@@ -53,6 +53,10 @@ final class SessionController {
     /// were closed.
     var transcript: [Turn] { engine.transcript }
 
+    /// The suggestion feed, oldest first. The last one is the answer to the
+    /// question just asked and is the one the overlay highlights.
+    var suggestions: [Suggestion] { engine.suggestions }
+
     // MARK: - Start and stop
 
     func toggle() {
@@ -148,16 +152,19 @@ extension SessionController {
     /// The session the app actually runs: both channels in, thresholds as the
     /// user set them, recognition as the settings screen selected it.
     ///
-    /// This is the one place where the concrete captures and the concrete
-    /// recogniser meet. Everything below it sees `AudioSource` and
-    /// `SpeechRecognizer` only, so a second capture backend or a different
-    /// recogniser arrives without this signature or the engine changing.
+    /// This is the one place where the concrete captures, the concrete
+    /// recogniser and the concrete model meet. Everything below it sees
+    /// `AudioSource`, `SpeechRecognizer` and `LLMProvider` only, so a second
+    /// capture backend, a different recogniser or a local model arrives without
+    /// this signature or the engine changing. `provider` is a parameter so that
+    /// a test can put a stub in the same slot.
     ///
     /// `Them` follows the settings screen on its own: re-pointing the tap at
     /// another application mid-call needs no restart of the session.
     static func dualChannel(
         settings: SettingsStore,
-        recognizer: SpeechRecognizer
+        recognizer: SpeechRecognizer,
+        provider: (any LLMProvider)? = nil
     ) -> SessionController {
         let them = ProcessTapCaptureService()
         them.followSourceSelection(of: settings)
@@ -166,6 +173,10 @@ extension SessionController {
             engine: SessionEngine(
                 sources: [MicCaptureService(), them],
                 recognizer: recognizer,
+                provider: provider ?? ClaudeProvider.live(settings: settings),
+                // The profile is read at request time rather than captured, so
+                // editing it mid-call takes effect on the next suggestion.
+                composer: AssistSuggestionComposer { settings.profile },
                 config: settings.turnSegmentation
             )
         )

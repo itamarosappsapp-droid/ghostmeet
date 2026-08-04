@@ -29,6 +29,8 @@ struct ContentView: View {
             header
             Divider().opacity(0.4)
             failureNotice
+            suggestions
+            Divider().opacity(0.4)
             transcript
             Divider().opacity(0.4)
             footer
@@ -126,15 +128,25 @@ struct ContentView: View {
         NSWorkspace.shared.open(url)
     }
 
+    // MARK: - Suggestions
+
+    /// The main content of the window: what the model is answering right now.
+    ///
+    /// It takes the space that is left over, because this is what the user reads
+    /// mid-call; the transcript below is there to check that both channels are
+    /// being heard.
+    private var suggestions: some View {
+        SuggestionFeedView(suggestions: session.suggestions)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
     // MARK: - Transcript
 
-    /// The transcript is the whole content of the window for now.
-    ///
-    /// TODO(07 — Автоподсказка, 08 — Жизненный цикл подсказки): the suggestion
-    /// feed goes above it, with the transcript kept as the lower half.
+    /// The transcript keeps the lower strip of the window: enough to see the
+    /// last turns of both channels without competing with the suggestion.
     private var transcript: some View {
         TranscriptView(turns: session.transcript)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 96, maxHeight: 132, alignment: .topLeading)
     }
 
     // MARK: - Footer

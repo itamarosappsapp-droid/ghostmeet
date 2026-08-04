@@ -1,0 +1,164 @@
+//
+//  ClaudeProvider.swift
+//  GhostMeet
+//
+
+import Foundation
+
+/// The MVP cloud backend, behind `LLMProvider` (ADR-0001).
+///
+/// Two properties are load-bearing rather than nice to have:
+///
+/// 1. **Streaming.** A suggestion has to start appearing while the model is
+///    still writing it, so fragments are yielded the moment they arrive.
+/// 2. **Real cancellation.** A new `Them` turn cancels the in-flight suggestion
+///    (ADR-0003). Cancelling the consuming task terminates the stream, which
+///    cancels the work task, which tears down the HTTP request — the answer to
+///    the previous question is never paid for or finished in the background.
+///
+/// The key is read from the keychain per request and dropped again; it is never
+/// held in a property, so a provider instance is safe to keep around.
+nonisolated struct ClaudeProvider: LLMProvider {
+
+    /// Model and generation settings, in one place so the latency/quality
+    /// trade-off is visible rather than scattered through the request builder.
+    nonisolated struct Configuration: Equatable, Sendable {
+
+        /// Anthropic's current top model. Kept explicit — the MVP has one
+        /// provider and no router, so there is nothing to negotiate at runtime.
+        var model: String = "claude-opus-5"
+
+        /// `low` on purpose. The product promise is a suggestion inside the
+        /// ~800 ms pause; the model is already generating after STT and a
+        /// screenshot, and higher effort spends its budget before the first
+        /// visible character.
+        var effort: String = "low"
+
+        /// Off on purpose, for the same reason: on this model thinking is on by
+        /// default and its tokens land *before* any answer text, which reads on
+        /// screen as a long pause — precisely what the overlay exists to avoid.
+        /// The system prompt carries the guard against internal tags leaking
+        /// into the answer that turning thinking off calls for.
+        var thinkingEnabled: Bool = false
+
+        var endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
+
+        var apiVersion: String = "2023-06-01"
+
+        static let `default` = Configuration()
+    }
+
+    let name = "Claude"
+
+    private let configuration: Configuration
+    private let transport: any StreamingHTTPTransport
+    private let apiKey: @Sendable () async -> String?
+
+    /// - Parameter apiKey: Reads the key at the moment of the request. A closure
+    ///   rather than a stored string so a key entered mid-call takes effect on
+    ///   the next suggestion, and so nothing keeps a copy of it.
+    init(
+        apiKey: @escaping @Sendable () async -> String?,
+        transport: any StreamingHTTPTransport = URLSessionStreamingTransport(),
+        configuration: Configuration = .default
+    ) {
+        self.apiKey = apiKey
+        self.transport = transport
+        self.configuration = configuration
+    }
+
+    func stream(_ request: SuggestionRequest) -> AsyncThrowingStream<String, any Error> {
+        AsyncThrowingStream { continuation in
+            let work = Task {
+                do {
+                    try await run(request, into: continuation)
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish(throwing: CancellationError())
+                } catch let error as URLError where error.code == .cancelled {
+                    continuation.finish(throwing: CancellationError())
+                } catch let failure as LLMFailure {
+                    continuation.finish(throwing: failure)
+                } catch {
+                    continuation.finish(throwing: LLMFailure.provider(error.localizedDescription))
+                }
+            }
+            // The consumer stopping — because it cancelled, or simply walked away
+            // — is what abandons the request.
+            continuation.onTermination = { _ in work.cancel() }
+        }
+    }
+
+    private func run(
+        _ request: SuggestionRequest,
+        into continuation: AsyncThrowingStream<String, any Error>.Continuation
+    ) async throws {
+        let key = (await apiKey())?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let key, !key.isEmpty else { throw LLMFailure.missingKey }
+
+        let outgoing = try urlRequest(for: request, key: key)
+        let response = try await transport.send(outgoing)
+
+        guard response.statusCode == 200 else {
+            throw ClaudeWireFormat.failure(
+                status: response.statusCode,
+                body: await collect(response.lines)
+            )
+        }
+
+        for try await line in response.lines {
+            try Task.checkCancellation()
+            switch ClaudeWireFormat.decode(line: line) {
+            case .text(let fragment):
+                continuation.yield(fragment)
+            case .failure(let failure):
+                throw failure
+            case .done:
+                return
+            case .ignored:
+                continue
+            }
+        }
+    }
+
+    private func urlRequest(for request: SuggestionRequest, key: String) throws -> URLRequest {
+        var urlRequest = URLRequest(url: configuration.endpoint)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "content-type")
+        urlRequest.setValue(key, forHTTPHeaderField: "x-api-key")
+        urlRequest.setValue(configuration.apiVersion, forHTTPHeaderField: "anthropic-version")
+        urlRequest.httpBody = try ClaudeWireFormat.body(for: request, configuration: configuration)
+        return urlRequest
+    }
+
+    /// Reads a non-streaming body — an error response — back into one string.
+    private func collect(_ lines: AsyncThrowingStream<String, any Error>) async -> String {
+        var collected: [String] = []
+        do {
+            for try await line in lines { collected.append(line) }
+        } catch {
+            // A body we could not finish reading still has to produce a failure:
+            // degrade to whatever arrived rather than replacing the provider's
+            // own wording with a transport error.
+        }
+        return collected.joined(separator: "\n")
+    }
+}
+
+extension ClaudeProvider {
+
+    /// The provider wired to the real keychain.
+    ///
+    /// `SettingsStore` only ever hands out the key on demand, so the closure —
+    /// and not the provider — is what touches the keychain.
+    @MainActor
+    static func live(
+        settings: SettingsStore = .shared,
+        configuration: Configuration = .default
+    ) -> ClaudeProvider {
+        ClaudeProvider(
+            apiKey: { await MainActor.run { settings.providerKey() } },
+            configuration: configuration
+        )
+    }
+}

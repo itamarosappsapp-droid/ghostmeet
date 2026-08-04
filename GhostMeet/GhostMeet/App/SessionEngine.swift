@@ -23,6 +23,11 @@ final class SessionEngine {
     /// Turns of both channels in the order they were closed — the only
     /// representation of the conversation.
     private(set) var transcript: [Turn] = []
+    /// Suggestions in the order they were started, oldest first — the feed the
+    /// overlay shows. A suggestion appears here the moment generation starts and
+    /// grows fragment by fragment, so the user starts reading before the model
+    /// has finished writing.
+    private(set) var suggestions: [Suggestion] = []
     /// Whether capture is running.
     private(set) var isListening = false
     /// Last capture failure, shown inside the window and nowhere else.
@@ -39,18 +44,33 @@ final class SessionEngine {
     private let clock: SessionClock
     private let recognizer: SpeechRecognizer
     private let sources: [AudioSource]
+    /// The model behind the suggestions. Optional because the app has to be
+    /// usable — capture, transcript, settings — before a provider is configured;
+    /// with none, a closed `Them` turn simply asks for nothing.
+    private let provider: (any LLMProvider)?
+    private let composer: any SuggestionComposer
     private let segmenters: [Channel: TurnSegmenter]
     private var pauseWatchdog: Timer?
     private var recognitionInFlight: [Task<Void, Never>] = []
+    /// The generation currently running. Ticket 08 cancels it when a newer
+    /// `Them` turn arrives; here it exists so that whoever needs the finished
+    /// suggestion can wait for it.
+    private var suggestionTask: Task<Void, Never>?
 
     init(
         sources: [AudioSource] = [],
         recognizer: SpeechRecognizer = StubSpeechRecognizer(),
+        provider: (any LLMProvider)? = nil,
+        // Defaulted in the body rather than here: the composer is main-actor
+        // isolated, and a default argument is evaluated outside any actor.
+        composer: (any SuggestionComposer)? = nil,
         clock: SessionClock = SystemClock(),
         config: TurnSegmentationConfig = .default
     ) {
         self.sources = sources
         self.recognizer = recognizer
+        self.provider = provider
+        self.composer = composer ?? AssistSuggestionComposer()
         self.clock = clock
         self.config = config
         self.segmenters = Dictionary(
@@ -125,6 +145,17 @@ final class SessionEngine {
         for task in running { await task.value }
     }
 
+    /// Waits for the suggestion a closed `Them` turn may have started, including
+    /// the recognition that precedes it.
+    ///
+    /// Same reason as `waitForRecognition()`: generation runs beside the call so
+    /// that nothing waits on the model, and a test has to be able to reach the
+    /// end of it without sleeping.
+    func waitForSuggestion() async {
+        await waitForRecognition()
+        await suggestionTask?.value
+    }
+
     private func append(_ captured: CapturedTurn) {
         let turn = Turn(
             channel: captured.channel,
@@ -134,11 +165,12 @@ final class SessionEngine {
         transcript.append(turn)
         recognize(
             turn: turn.id,
+            on: turn.channel,
             audio: SpeechAudio(samples: captured.samples, sampleRate: captured.sampleRate)
         )
     }
 
-    private func recognize(turn id: Turn.ID, audio: SpeechAudio) {
+    private func recognize(turn id: Turn.ID, on channel: Channel, audio: SpeechAudio) {
         let recognizer = recognizer
         let task = Task { [weak self] in
             let text = (try? await recognizer.transcribe(audio)) ?? ""
@@ -146,6 +178,12 @@ final class SessionEngine {
             // A failed pass leaves the turn in place with no text: losing a turn
             // would be worse than showing one without words.
             self?.apply(text: text, to: id)
+            // The rest of the pipeline runs from here, and only for `Them`: the
+            // interlocutor stopped talking, so a suggestion is asked for on its
+            // own, with the words of that very turn already in the transcript.
+            // A closed `You` turn asks for nothing — the user is answering, and
+            // whatever is on screen is their crib sheet (ADR-0003).
+            if channel == .them { self?.startSuggestion(promptedBy: id) }
         }
         recognitionInFlight.append(task)
     }
@@ -153,6 +191,67 @@ final class SessionEngine {
     private func apply(text: String, to id: Turn.ID) {
         guard !text.isEmpty, let index = transcript.firstIndex(where: { $0.id == id }) else { return }
         transcript[index].text = text
+    }
+
+    // MARK: - Suggestions
+
+    /// Starts one generation and puts it in the feed straight away.
+    ///
+    /// The suggestion is appended empty and `streaming`, before a single
+    /// fragment has arrived: that is what lets the window show the answer being
+    /// written instead of a spinner followed by a wall of text.
+    private func startSuggestion(promptedBy turn: Turn.ID?) {
+        guard let provider else { return }
+
+        let request = composer.compose(transcript: transcript)
+        let suggestion = Suggestion(promptedBy: turn, startedAt: Date())
+        suggestions.append(suggestion)
+
+        // The request leaves before the task that reads it is scheduled: this is
+        // the moment the interlocutor stopped talking, and every hop between
+        // here and the first token is latency the user waits through.
+        let stream = provider.stream(request)
+
+        let id = suggestion.id
+        suggestionTask = Task { [weak self] in
+            do {
+                for try await fragment in stream {
+                    guard !Task.isCancelled else { return }
+                    self?.append(fragment: fragment, to: id)
+                }
+                guard !Task.isCancelled else { return }
+                self?.settle(id, as: .complete)
+            } catch is CancellationError {
+                // Superseded by a newer turn; whoever cancelled owns the state.
+                return
+            } catch {
+                // Reported in the feed and nowhere else. A system notification
+                // would be drawn over the shared screen (ADR-0004).
+                self?.settle(id, as: .failed(Self.message(for: error)))
+            }
+        }
+    }
+
+    private func append(fragment: String, to id: Suggestion.ID) {
+        guard let index = suggestions.firstIndex(where: { $0.id == id }),
+              !suggestions[index].isSettled
+        else { return }
+        suggestions[index].text += fragment
+    }
+
+    /// Settles a suggestion, unless something already settled it: a stream that
+    /// finishes after being superseded must not claim it completed.
+    private func settle(_ id: Suggestion.ID, as state: Suggestion.State) {
+        guard let index = suggestions.firstIndex(where: { $0.id == id }),
+              !suggestions[index].isSettled
+        else { return }
+        suggestions[index].state = state
+    }
+
+    /// The failure in words meant for the user: the provider's own wording when
+    /// it gave one, the system's otherwise.
+    private static func message(for error: any Error) -> String {
+        (error as? LLMFailure)?.message ?? error.localizedDescription
     }
 
     private func startPauseWatchdog() {
