@@ -8,11 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-The MVP pipeline runs end to end: both channels are captured, turns are cut on pauses, speech is recognised locally, and a closed `Them` turn starts a suggestion on its own. **323 tests** across 48 suites (Swift Testing, target `GhostMeetTests`).
+The MVP pipeline runs end to end: both channels are captured, turns are cut on pauses, speech is recognised locally, a closed `Them` turn starts a suggestion on its own, and the user can ask for one themselves. **360 tests** across 53 suites (Swift Testing, target `GhostMeetTests`).
 
-Done: project skeleton and test target, microphone capture with VPIO, turn segmentation, WhisperKit recognition with model selection, the overlay window, the `Them` channel (both backends, SCK by default), settings with per-provider keys, the proactive `Assist` loop with a streaming Claude provider, the full provider router (OpenAI-compatible family, Gemini, CLI tools), screenshot and OCR on every request, the suggestion lifecycle (a newer `Them` turn supersedes the answer in flight), global hotkeys and per-channel indicators.
+Done: project skeleton and test target, microphone capture with VPIO, turn segmentation, WhisperKit recognition with model selection, the overlay window, the `Them` channel (both backends, SCK by default), settings with per-provider keys, the proactive `Assist` loop with a streaming Claude provider, the full provider router (OpenAI-compatible family, Gemini, CLI tools), screenshot and OCR on every request, the suggestion lifecycle (a newer `Them` turn supersedes the answer in flight), the manual `Ask` / `Solve on screen` modes under those same cancellation rules, global hotkeys and per-channel indicators.
 
-Not done: the manual `Ask` / `Solve on screen` modes (ticket 11). Tickets live in `.scratch/interview-mvp/`.
+Every ticket of the interview MVP is implemented; several are `ready-for-human` and awaiting review. Tickets live in `.scratch/interview-mvp/`. What is left beyond them is the v1.0 list in [docs/GhostMeet.md](docs/GhostMeet.md) — the background Summarizer above all, which is why the `{{#if summary}}` block of every prompt is still unbuilt.
 
 The audio investigation is over and its scaffolding is gone: no diagnostics object, no level probes, no environment flags of our own. What survived it are the fixes it found — `MicCaptureService.firstChannel`, `ProcessTap.DeliveryFormat`, `PCMMixdown`, the mic tap installed with `format: nil` — and their regression tests. Logging is lifecycle-only now: capture start and failure (`SessionEngine`), `Them` channel status (`SessionController`), recognition model phase (`SpeechModelStatus`). Nothing per frame, nothing anybody said. Keep it that way — a per-frame log in this app writes the conversation to disk.
 
@@ -160,6 +160,8 @@ These are the decisions that shape everything else; changing one has ripple effe
 
 Cancellation there is narrower than it looks, and the boundary is load-bearing: a superseded turn loses its *answer* — the stream, the screenshot being taken for it, the right to start a suggestion at all — and keeps its *words*. Speech recognition is never cancelled, because the interlocutor who paused mid-sentence left two turns behind and the new request is composed from both; cancel it and the prompt gets an empty `Them` turn instead of the first half of the question. What stops the stale branch is `SessionEngine.answering`, not `Task.cancel()`.
 
+The manual modes (`Ask`, `Solve on screen`) are the same loop entered from the other end and obey the same rules — `SessionEngine.ask(_:)` and `solveOnScreen()` supersede first, then capture, then stream. They are not a side channel: the next `Them` turn cancels a manual answer exactly as it cancels an automatic one, and a manual request clears `answering` so that the two never generate into the feed side by side.
+
 The planned Swift file layout (`App/`, `UI/`, `Audio/`, `Speech/`, `Intelligence/{Context,LLM,Screen}/`, `Input/`, `Settings/`, `Utilities/`) is in [docs/GhostMeet.md](docs/GhostMeet.md) — follow it when creating files rather than inventing a new structure.
 
 ## Modes and prompts
@@ -168,11 +170,11 @@ Six user-facing modes — Assist, What should I say?, Follow-up, Recap, Ask, Sol
 
 Cross-cutting rules from that file that are easy to get wrong:
 
-- Never crash or bail on an empty transcript — substitute a placeholder like `(пусто)` and still answer
+- Never crash or bail on an empty transcript — substitute a placeholder like `(пусто)` and still answer, or, where the document's template guards the block with `{{#if transcript}}`, omit it entirely. Never send a bare heading: that reads to the model as "nothing was said", which is a different and usually wrong claim
 - Don't force Russian: response language follows the language of the Them/You turns or the user's question
-- Different modes read different transcript window sizes (12 / 14 / 20 / all) and different max-token budgets (256–512 for Say/Follow-up, 2k–4k for Solve/Assist)
-- Multimodal modes (Assist, Ask, Solve on screen) attach the screenshot to the *user* message; Solve additionally passes Vision-framework OCR text
-- The optional `resume_context` block at the end of that file is **not optional here** — it carries the user's `Профиль` and ships in the MVP. Without it the model suggests experience the user doesn't have, which is a worse failure than a slow answer
+- Different modes read different transcript window sizes (12 / 14 / 20 / all / none at all for Solve) and different max-token budgets (256–512 for Say/Follow-up, 2k–4k for Ask/Solve/Assist)
+- Multimodal modes (Assist, Ask, Solve on screen) attach the screenshot to the *user* message; all three also pass the Vision-framework OCR text, which is the only thing a text-only provider ever learns about the screen
+- The optional `resume_context` block at the end of that file is **not optional here** — it carries the user's `Профиль` and ships in the MVP. Without it the model suggests experience the user doesn't have, which is a worse failure than a slow answer. The one exception is `Solve on screen`, whose answer goes into an editor rather than into a sentence said out loud — see note 5 of the prompt document
 
 ## Permissions
 

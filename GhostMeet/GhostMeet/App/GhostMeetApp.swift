@@ -68,7 +68,7 @@ final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
         recognition: recognition
     )
 
-    /// The four global chords and what they do.
+    /// The five global chords and what they do.
     ///
     /// Built on Carbon's `RegisterEventHotKey`, which needs **no permission** —
     /// see `CarbonHotkeyRegistry`. The app already asks for four grants; a fifth
@@ -127,7 +127,7 @@ final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
         overlayWindowController.show()
     }
 
-    /// Connects the four chords to the things they drive, and registers them
+    /// Connects the five chords to the things they drive, and registers them
     /// with the system.
     ///
     /// The composition root is the only place that knows all three participants:
@@ -145,6 +145,9 @@ final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
             // would cost the user the opening question of the interview.
             startListening: { [weak self] in self?.session.startWhenRecognitionIsReady() },
             stopListening: { [weak self] in self?.session.stop() },
+            // The one manual mode that is wanted with the hands on someone
+            // else's editor rather than on this window — see `HotkeyAction`.
+            solveOnScreen: { [weak self] in self?.session.solveOnScreen() },
             clearContext: { [weak self] in self?.session.clearContext() }
         )
         hotkeys.activate()

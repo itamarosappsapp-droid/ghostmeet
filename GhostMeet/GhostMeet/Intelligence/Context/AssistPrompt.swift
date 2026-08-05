@@ -31,9 +31,10 @@ nonisolated enum AssistPrompt {
 
     /// Heading of the block that carries what Vision read off the screen.
     ///
-    /// Same wording as the `Solve on screen` prompt in docs/GhostMeet-Prompts.md
-    /// §6 — one thing, one name, whichever mode is asking.
-    static let screenTextHeading = "Текст с экрана (OCR):"
+    /// Same wording as the `Ask` and `Solve on screen` prompts in
+    /// docs/GhostMeet-Prompts.md §5 and §6 — one thing, one name, whichever mode
+    /// is asking, which is why the constant itself is shared.
+    static let screenTextHeading = PromptFragment.screenTextHeading
 
     /// One assembled request. Every mode-specific decision — prompt, window
     /// size, token budget — is made here, which is why `LLMProvider` needs to
@@ -64,13 +65,7 @@ nonisolated enum AssistPrompt {
     /// model suggests experience the user does not have, which is a worse failure
     /// than a slow answer.
     static func system(profile: UserProfile) -> String {
-        guard !profile.isEmpty else { return systemRules }
-        return """
-        \(systemRules)
-
-        Контекст о пользователе (резюме / роль / стек):
-        \(profile.promptFragment)
-        """
+        PromptFragment.system(systemRules, profile: profile)
     }
 
     /// The transcript window, what is written on the screen, and the ask.
@@ -81,8 +76,7 @@ nonisolated enum AssistPrompt {
     /// not be grabbed.
     static func user(transcript: [Turn], screenText: String = "") -> String {
         let window = TranscriptFormatter.format(transcript, limit: transcriptWindow)
-        let screen = screenText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let screenBlock = screen.isEmpty ? "" : "\n\(screenTextHeading)\n\(screen)\n"
+        let screenBlock = PromptFragment.screenText(screenText).map { "\n\($0)\n" } ?? ""
         return """
         Недавний разговор:
         \(window.isEmpty ? emptyTranscriptPlaceholder : window)

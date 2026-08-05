@@ -43,6 +43,8 @@ struct ContentView: View {
             themNotice
             suggestions
             Divider().opacity(0.4)
+            askBar
+            Divider().opacity(0.4)
             transcript
             Divider().opacity(0.4)
             footer
@@ -294,6 +296,19 @@ struct ContentView: View {
     private var suggestions: some View {
         SuggestionFeedView(suggestions: session.suggestions)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    // MARK: - Ask and Solve
+
+    /// The manual way to the model: a question typed by the user, and the demand
+    /// for the task on screen to be solved.
+    ///
+    /// Directly under the feed, because that is where its answer lands. It stays
+    /// visible mid-call rather than hiding behind a disclosure: the whole point
+    /// of the two modes is being reachable in one motion at the moment the
+    /// automatic loop has answered the wrong thing.
+    private var askBar: some View {
+        AskBarView(session: session)
     }
 
     // MARK: - Transcript

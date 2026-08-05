@@ -341,7 +341,9 @@ struct HotkeyBindingTests {
             let center = HotkeyCenter(store: settings, registry: registry)
             center.rebind(.clearContext, to: nil)
 
-            #expect(Set(registry.registered.keys) == [.toggleVisibility, .startListening, .stopListening])
+            #expect(
+                Set(registry.registered.keys) == Set(HotkeyAction.allCases).subtracting([.clearContext])
+            )
         }
     }
 }

@@ -24,6 +24,9 @@ struct HotkeyActions {
     /// `startWhenRecognitionIsReady()` for precisely this caller.
     var startListening: () -> Void = {}
     var stopListening: () -> Void = {}
+    /// Mode `Solve on screen`, started by hand. Needs no session — the screen is
+    /// the whole input — so this fires whether or not capture is running.
+    var solveOnScreen: () -> Void = {}
     var clearContext: () -> Void = {}
 
     subscript(action: HotkeyAction) -> () -> Void {
@@ -31,6 +34,7 @@ struct HotkeyActions {
         case .toggleVisibility: toggleVisibility
         case .startListening: startListening
         case .stopListening: stopListening
+        case .solveOnScreen: solveOnScreen
         case .clearContext: clearContext
         }
     }

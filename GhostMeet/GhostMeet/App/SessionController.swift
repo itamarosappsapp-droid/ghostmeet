@@ -110,6 +110,26 @@ final class SessionController {
         return reason
     }
 
+    // MARK: - Ручные режимы
+
+    /// Answers a question the user typed — mode `Ask`.
+    ///
+    /// A passthrough on purpose: whether a question is worth asking is a decision
+    /// of the engine (it is the one that knows what is already being answered),
+    /// and the overlay must not have to know that. What this type adds is the
+    /// same thing it adds everywhere else — the window has one object to talk to.
+    func ask(_ question: String) {
+        engine.ask(question)
+    }
+
+    /// Asks for the task on screen to be solved — mode `Solve on screen`.
+    ///
+    /// Works whether or not the session is listening: the screen is the whole
+    /// input.
+    func solveOnScreen() {
+        engine.solveOnScreen()
+    }
+
     // MARK: - Clearing the context
 
     /// Forgets the conversation so far: the transcript, the suggestions, and what
@@ -318,6 +338,35 @@ struct ContextLimitedComposer: SuggestionComposer {
     }
 }
 
+/// The same filter for the modes the user starts by hand.
+///
+/// `Ask` reads the conversation, so clearing the context has to reach it too —
+/// otherwise the one place a forgotten turn could still surface is the very
+/// question the user typed to change the subject. (`Solve on screen` reads no
+/// transcript at all, so for that mode this wrapper is a no-op — which is the
+/// right kind of no-op: the rule is stated once, for every manual mode, rather
+/// than per mode.)
+@MainActor
+struct ContextLimitedManualComposer: ManualComposer {
+
+    let context: ConversationContext
+    let wrapped: any ManualComposer
+
+    func compose(
+        _ ask: ManualAsk,
+        transcript: [Turn],
+        screen: ScreenContext,
+        accepting capabilities: ProviderCapabilities
+    ) -> SuggestionRequest {
+        wrapped.compose(
+            ask,
+            transcript: context.remembered(transcript),
+            screen: screen,
+            accepting: capabilities
+        )
+    }
+}
+
 extension SessionController {
 
     /// Why the session is not listening.
@@ -403,6 +452,13 @@ extension SessionController {
                 composer: ContextLimitedComposer(
                     context: context,
                     wrapped: AssistSuggestionComposer { settings.profile }
+                ),
+                // `Ask` and `Solve on screen` read the same profile and obey the
+                // same clearing, and differ from the loop only in what they are
+                // asked.
+                manualComposer: ContextLimitedManualComposer(
+                    context: context,
+                    wrapped: ManualPromptComposer { settings.profile }
                 ),
                 config: settings.turnSegmentation
             ),

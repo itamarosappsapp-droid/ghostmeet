@@ -76,6 +76,11 @@ final class SessionEngine {
     /// is what keeps it equal to the settings screen.
     @ObservationIgnored var provider: (any LLMProvider)?
     private let composer: any SuggestionComposer
+    /// The prompts of the modes the user starts by hand — `Ask` and `Solve on
+    /// screen`. Separate from `composer` because it answers a different question:
+    /// that one is handed the conversation, this one is handed what the user
+    /// asked for.
+    private let manualComposer: any ManualComposer
     private let segmenters: [Channel: TurnSegmenter]
     private var pauseWatchdog: Timer?
     /// Recognition running per closed turn. Each task removes its own entry when
@@ -110,6 +115,7 @@ final class SessionEngine {
         // Defaulted in the body rather than here: the composer is main-actor
         // isolated, and a default argument is evaluated outside any actor.
         composer: (any SuggestionComposer)? = nil,
+        manualComposer: (any ManualComposer)? = nil,
         capturer: (any ScreenCapturer)? = nil,
         clock: SessionClock = SystemClock(),
         config: TurnSegmentationConfig = .default
@@ -118,6 +124,7 @@ final class SessionEngine {
         self.recognizer = recognizer
         self.provider = provider
         self.composer = composer ?? AssistSuggestionComposer()
+        self.manualComposer = manualComposer ?? ManualPromptComposer()
         self.capturer = capturer ?? ScreenCaptureService()
         self.clock = clock
         self.config = config
@@ -206,7 +213,15 @@ final class SessionEngine {
     /// end of it without sleeping.
     func waitForSuggestion() async {
         await waitForRecognition()
-        await suggestionTask?.value
+        // Waiting once is not enough for a request the user made by hand: that
+        // one waits for the screenshot in a task of its own and only then hands
+        // the slot to the task that reads the stream. Following the slot until it
+        // stops changing covers both shapes with one rule.
+        var awaited: Task<Void, Never>?
+        while let task = suggestionTask, task != awaited {
+            awaited = task
+            await task.value
+        }
     }
 
     private func append(_ captured: CapturedTurn) {
@@ -318,6 +333,89 @@ final class SessionEngine {
         transcript[index].text = text
     }
 
+    // MARK: - Ручные режимы
+
+    /// Answers a question the user typed — mode `Ask`.
+    ///
+    /// Blank input does nothing at all rather than asking the model to answer
+    /// nothing: an empty question would still supersede the suggestion on screen,
+    /// and losing a half-read answer to a stray Return is a worse outcome than a
+    /// button that seems not to have worked.
+    func ask(_ question: String) {
+        let text = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        startManualAnswer(.question(text))
+    }
+
+    /// Solves the task on the screen — mode `Solve on screen`.
+    ///
+    /// Needs no session: the screen is the whole input, so this works before
+    /// listening has ever been started and keeps working after it is stopped.
+    func solveOnScreen() {
+        startManualAnswer(.screenTask)
+    }
+
+    /// Takes what the user asked for as the question being answered, and starts
+    /// the screenshot that will travel with it.
+    ///
+    /// Deliberately the very same machinery as a closed `Them` turn, down to the
+    /// order: supersede first, then capture, then generate. A manual request is
+    /// not a side channel — it is subject to the same rule, so the next `Them`
+    /// turn cancels it exactly as it cancels an automatic answer (ADR-0003).
+    ///
+    /// `answering` is cleared rather than set: the automatic pipeline still
+    /// hanging off the last `Them` turn checks that identifier before it starts
+    /// generating, so clearing it is what stops an automatic answer landing on
+    /// top of the one the user just asked for. The two never run side by side —
+    /// two answers streaming into one feed would leave the user reading whichever
+    /// won the race.
+    private func startManualAnswer(_ ask: ManualAsk) {
+        guard provider != nil else {
+            reportNothingToAnswerWith()
+            return
+        }
+        supersedeAnswerInFlight()
+        answering = nil
+
+        let screen = Task { [capturer] in await capturer.capture() }
+        screenTask = screen
+
+        // The wait for the screen is the cancellable task for now; the moment
+        // there is something to stream, `stream(_:from:promptedBy:screen:)`
+        // takes the slot over. Either way one task is cancellable at a time,
+        // which is what `supersedeAnswerInFlight()` relies on.
+        suggestionTask = Task { [weak self] in
+            let context = await screen.value
+            guard !Task.isCancelled else { return }
+            self?.startManualSuggestion(ask, screen: context)
+        }
+    }
+
+    private func startManualSuggestion(_ ask: ManualAsk, screen: ScreenContext) {
+        guard let provider else { return }
+        let request = manualComposer.compose(
+            ask,
+            transcript: transcript,
+            screen: screen,
+            accepting: provider.capabilities
+        )
+        stream(request, from: provider, promptedBy: nil, screen: screen)
+    }
+
+    /// Says in the feed that there is no model to answer with.
+    ///
+    /// Only the manual modes report this. The automatic loop stays silent
+    /// without a provider — nobody asked it for anything, and a card per closed
+    /// `Them` turn would bury the window in identical complaints. A button the
+    /// user pressed is the opposite case: silence there reads as a broken app.
+    ///
+    /// Inside the window and nowhere else, like every other failure (ADR-0004).
+    private func reportNothingToAnswerWith() {
+        suggestions.append(
+            Suggestion(state: .failed(LLMFailure.missingKey.message), startedAt: Date())
+        )
+    }
+
     // MARK: - Suggestions
 
     /// Starts one generation and puts it in the feed straight away.
@@ -332,7 +430,26 @@ final class SessionEngine {
     /// keep its words.
     private func startSuggestion(promptedBy turn: Turn.ID?, screen: ScreenContext) {
         guard let provider else { return }
+        let request = composer.compose(
+            transcript: transcript,
+            screen: screen,
+            accepting: provider.capabilities
+        )
+        stream(request, from: provider, promptedBy: turn, screen: screen)
+    }
 
+    /// Starts the generation itself, whichever mode assembled the request.
+    ///
+    /// The engine gets no further than this into what was asked: which prompt,
+    /// how much of the conversation and how many tokens were all decided by the
+    /// composer, and from here on a question the user typed and a question the
+    /// interlocutor asked are the same object with the same lifecycle.
+    private func stream(
+        _ request: SuggestionRequest,
+        from provider: any LLMProvider,
+        promptedBy turn: Turn.ID?,
+        screen: ScreenContext
+    ) {
         // A screen that could not be grabbed is reported and then stepped over:
         // the request goes out without a picture rather than not at all
         // (ADR-0003). The reason lives in the window and nowhere else — a system
@@ -344,11 +461,6 @@ final class SessionEngine {
         // `start()` and there is no session to report into.
         lastError = screen.failure
 
-        let request = composer.compose(
-            transcript: transcript,
-            screen: screen,
-            accepting: provider.capabilities
-        )
         let suggestion = Suggestion(promptedBy: turn, startedAt: Date())
         suggestions.append(suggestion)
 

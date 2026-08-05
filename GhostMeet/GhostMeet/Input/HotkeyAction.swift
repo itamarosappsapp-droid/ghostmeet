@@ -8,10 +8,17 @@ import Foundation
 
 /// What a global hotkey does.
 ///
-/// Four, and deliberately no more: hotkeys are the **secondary** path in
+/// Five, and deliberately no more: hotkeys are the **secondary** path in
 /// GhostMeet (ADR-0003) — the suggestion loop fires on its own, and reaching for
 /// the keyboard on camera is exactly what the proactive loop exists to avoid.
-/// These four are the things the loop cannot decide for the user.
+/// These five are the things the loop cannot decide for the user.
+///
+/// `Solve on screen` is the one mode that earns a chord rather than only a
+/// button. It is wanted at exactly the moment the interview turns into a shared
+/// editor — when the cursor is in someone else's window, the questions have
+/// stopped, and hunting for a button in a translucent overlay is both slow and
+/// visible. `Ask` gets no chord: it needs the keyboard anyway, so the field is
+/// already the fastest way in.
 nonisolated enum HotkeyAction: String, CaseIterable, Codable, Sendable, Identifiable {
 
     /// Show or hide the overlay. **Capture keeps running while it is hidden** —
@@ -21,6 +28,9 @@ nonisolated enum HotkeyAction: String, CaseIterable, Codable, Sendable, Identifi
     case startListening
     /// Stop listening.
     case stopListening
+    /// Ask for the task on screen to be solved, without waiting for the
+    /// interlocutor to ask anything.
+    case solveOnScreen
     /// Forget the conversation so far. The `Профиль` survives it — it belongs to
     /// the user, not to the call.
     case clearContext
@@ -32,6 +42,7 @@ nonisolated enum HotkeyAction: String, CaseIterable, Codable, Sendable, Identifi
         case .toggleVisibility: "Показать / скрыть окно"
         case .startListening: "Начать прослушивание"
         case .stopListening: "Остановить прослушивание"
+        case .solveOnScreen: "Решить задачу с экрана"
         case .clearContext: "Очистить контекст разговора"
         }
     }
@@ -47,6 +58,8 @@ nonisolated enum HotkeyAction: String, CaseIterable, Codable, Sendable, Identifi
             "Если модель распознавания ещё готовится, прослушивание включится само, как только она будет готова."
         case .stopListening:
             "Останавливает оба канала и закрывает начатую реплику."
+        case .solveOnScreen:
+            "Просит готовое решение задачи, которая сейчас на экране. Работает и без прослушивания."
         case .clearContext:
             "Стирает транскрипт и подсказки текущего звонка. Профиль остаётся."
         }
@@ -63,6 +76,7 @@ nonisolated enum HotkeyAction: String, CaseIterable, Codable, Sendable, Identifi
         case .toggleVisibility: Hotkey(kVK_ANSI_Backslash, [.command])
         case .startListening: Hotkey(kVK_ANSI_L, [.command, .option])
         case .stopListening: Hotkey(kVK_ANSI_Period, [.command, .option])
+        case .solveOnScreen: Hotkey(kVK_ANSI_G, [.command, .option])
         case .clearContext: Hotkey(kVK_ANSI_K, [.command, .option])
         }
     }
