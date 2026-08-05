@@ -446,7 +446,7 @@ struct PanicHotkeyTests {
                 session: session,
                 recognition: SpeechModelStatus(store: settings, provider: FakeSpeechModelProvider()),
                 hotkeys: HotkeyCenter(store: settings, registry: FakeHotkeyRegistry()),
-                openSettings: {},
+                openSettings: { _ in },
                 stateStore: WindowStateStore(defaults: defaults)
             )
         }
@@ -482,7 +482,7 @@ struct PanicHotkeyTests {
                 session: session,
                 recognition: SpeechModelStatus(store: settings, provider: FakeSpeechModelProvider()),
                 hotkeys: center,
-                openSettings: {},
+                openSettings: { _ in },
                 stateStore: WindowStateStore(defaults: defaults)
             )
             return (overlay, center)

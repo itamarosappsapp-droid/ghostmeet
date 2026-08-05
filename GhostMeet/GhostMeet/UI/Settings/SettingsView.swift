@@ -21,6 +21,14 @@ struct SettingsView: View {
     /// same store this screen edits, and a default would hide a mismatch.
     let recognition: SpeechModelStatus
 
+    /// Which section the screen has been asked to show — see `SettingsNavigation`.
+    ///
+    /// Also passed in rather than defaulted, and for the same kind of reason: a
+    /// default here would be an object nobody else holds, so every request would
+    /// be made to one instance and read from another, and the form would sit
+    /// where it was without a word.
+    let navigation: SettingsNavigation
+
     /// Holds the key only while the user is typing it. Cleared as soon as it
     /// reaches the keychain so the secret does not linger in view state.
     @State private var providerKeyDraft: String = ""
@@ -30,27 +38,55 @@ struct SettingsView: View {
     /// a setting, and what capture actually shares with it is only the stored id.
     @State private var catalog = SourceApplicationCatalog()
 
+    /// The last request already scrolled to. Without it, every redraw of the
+    /// form would drag the user back to the section they arrived at.
+    @State private var revealed: Int = 0
+
     var body: some View {
-        Form {
-            profileSection
-            captureBackendSection
-            sourceApplicationSection
-            recognitionSection
-            providerSection
-            providerKeySection
-            segmentationSection
+        // Each section is tagged with its own anchor so that a press on the
+        // readiness strip lands on the control it named rather than at the top
+        // of a form seven sections long. `Form` on macOS lays every section out
+        // — none of this is lazy — so all seven anchors exist to be scrolled to.
+        ScrollViewReader { proxy in
+            Form {
+                profileSection.id(SettingsSection.profile)
+                captureBackendSection.id(SettingsSection.captureBackend)
+                sourceApplicationSection.id(SettingsSection.sourceApplication)
+                recognitionSection.id(SettingsSection.recognition)
+                providerSection.id(SettingsSection.provider)
+                providerKeySection.id(SettingsSection.providerKey)
+                segmentationSection.id(SettingsSection.segmentation)
+            }
+            .formStyle(.grouped)
+            .frame(minWidth: 480, minHeight: 620)
+            .onAppear {
+                catalog.backend = store.themCaptureBackend
+                catalog.startTracking()
+                // The window is built the moment it is first asked for, so the
+                // very first request arrives before this view exists and no
+                // change ever fires for it.
+                reveal(with: proxy)
+            }
+            .onChange(of: navigation.request) { reveal(with: proxy) }
+            // The two lists are not the same list, so the picker below has to be
+            // rebuilt for the backend the user just chose — otherwise it keeps
+            // offering applications this backend cannot see, and the channel goes
+            // silent with nothing on screen to explain it.
+            .onChange(of: store.themCaptureBackend) { catalog.backend = store.themCaptureBackend }
         }
-        .formStyle(.grouped)
-        .frame(minWidth: 480, minHeight: 620)
-        .onAppear {
-            catalog.backend = store.themCaptureBackend
-            catalog.startTracking()
+    }
+
+    /// Scrolls to the section asked for, once per request.
+    ///
+    /// A hop through the main queue on purpose: at `onAppear` the form has not
+    /// been laid out yet, and scrolling to an anchor that has no place yet does
+    /// nothing at all.
+    private func reveal(with proxy: ScrollViewProxy) {
+        guard let request = navigation.request, request.token != revealed else { return }
+        revealed = request.token
+        Task { @MainActor in
+            withAnimation { proxy.scrollTo(request.section, anchor: .top) }
         }
-        // The two lists are not the same list, so the picker below has to be
-        // rebuilt for the backend the user just chose — otherwise it keeps
-        // offering applications this backend cannot see, and the channel goes
-        // silent with nothing on screen to explain it.
-        .onChange(of: store.themCaptureBackend) { catalog.backend = store.themCaptureBackend }
     }
 
     // MARK: - Capture backend
@@ -524,5 +560,9 @@ struct SettingsView: View {
         defaults: UserDefaults(suiteName: "GhostMeetSettingsPreview") ?? .standard,
         secrets: InMemorySecretStore()
     )
-    return SettingsView(store: store, recognition: SpeechModelStatus(store: store))
+    return SettingsView(
+        store: store,
+        recognition: SpeechModelStatus(store: store),
+        navigation: SettingsNavigation()
+    )
 }

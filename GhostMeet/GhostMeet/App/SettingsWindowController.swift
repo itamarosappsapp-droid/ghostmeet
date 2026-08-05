@@ -31,6 +31,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// than a setting, which is why it arrives beside the store and not inside it.
     private let recognition: SpeechModelStatus
 
+    /// Which section the screen is asked to show. Owned here because the window
+    /// outlives every request made to it: the view is built once and then only
+    /// re-shown.
+    private let navigation = SettingsNavigation()
+
     private var window: NSWindow?
 
     init(store: SettingsStore, recognition: SpeechModelStatus) {
@@ -39,8 +44,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         super.init()
     }
 
-    /// Puts the settings window up, focused and in front.
-    func show() {
+    /// Puts the settings window up, focused and in front — at `section` when the
+    /// caller named one.
+    ///
+    /// The request is made **before** the window is loaded, so that the very
+    /// first press on the readiness strip, which is also what builds the window,
+    /// still arrives at the right section.
+    func show(_ section: SettingsSection? = nil) {
+        if let section { navigation.reveal(section) }
         let window = loadedWindow()
         // Cooperative activation may refuse an accessory app that the user never
         // clicked in the Dock — and the click that got us here landed in a
@@ -64,7 +75,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     private func makeWindow() -> NSWindow {
-        let content = SettingsView(store: store, recognition: recognition)
+        let content = SettingsView(store: store, recognition: recognition, navigation: navigation)
         let window = NSWindow(contentViewController: NSHostingController(rootView: content))
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.title = "Настройки GhostMeet"

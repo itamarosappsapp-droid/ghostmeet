@@ -35,9 +35,19 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
     /// chord that brings it back has to be written down inside it.
     private let hotkeys: HotkeyCenter
 
+    /// What the readiness strip reads: profiles, provider, source application.
+    /// Passed straight through, like the two above — window geometry has no
+    /// opinion about any of it.
+    ///
+    /// Optional, and `nil` only where there is no user to be armed: the window
+    /// tests build this controller to check that the panic key hides a panel,
+    /// and handing them a settings store would mean either the real one or a
+    /// stand-in full of placeholders. The strip is then simply absent.
+    private let settings: SettingsStore?
+
     /// Opening the settings window is somebody else's job — the overlay only
     /// has the button. In accessory mode there is no menu bar to put it in.
-    private let openSettings: () -> Void
+    private let openSettings: OpenSettings
 
     private let configuration: OverlayWindowConfiguration
     private let stateStore: WindowStateStore
@@ -47,7 +57,8 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
         session: SessionController,
         recognition: SpeechModelStatus,
         hotkeys: HotkeyCenter,
-        openSettings: @escaping () -> Void,
+        openSettings: @escaping OpenSettings,
+        settings: SettingsStore? = nil,
         configuration: OverlayWindowConfiguration = .overlay,
         stateStore: WindowStateStore = WindowStateStore()
     ) {
@@ -55,6 +66,7 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
         self.recognition = recognition
         self.hotkeys = hotkeys
         self.openSettings = openSettings
+        self.settings = settings
         self.configuration = configuration
         self.stateStore = stateStore
         self.opacity = configuration.clampOpacity(stateStore.opacity ?? configuration.defaultOpacity)
@@ -117,6 +129,7 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
                 controller: self,
                 session: session,
                 recognition: recognition,
+                settings: settings,
                 hotkeys: hotkeys,
                 openSettings: openSettings
             )

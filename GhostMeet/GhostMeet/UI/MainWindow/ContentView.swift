@@ -25,14 +25,24 @@ struct ContentView: View {
     /// a disabled button with no visible reason reads as a broken app.
     let recognition: SpeechModelStatus
 
+    /// What the user is armed with: the `Активный профиль`, the provider, the
+    /// `Приложение-источник`. Read live rather than copied, so switching a
+    /// profile here is in force for the next suggestion.
+    ///
+    /// Optional because the window can be built without a user's settings —
+    /// the window-plumbing tests do exactly that — and a readiness strip with
+    /// nothing true to say is better absent than filled with placeholders.
+    let settings: SettingsStore?
+
     /// The global chords and their bindings. Shown here so that the one thing a
     /// user needs after pressing the panic key — the chord that brings the window
     /// back — is written down in the window itself.
     let hotkeys: HotkeyCenter
 
-    /// Opens the settings window. In accessory mode there is no menu bar, so
-    /// this button is the only way in.
-    let openSettings: () -> Void
+    /// Opens the settings window, at a named section when the caller has one in
+    /// mind. In accessory mode there is no menu bar, so this button is the only
+    /// way in.
+    let openSettings: OpenSettings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -56,17 +66,39 @@ struct ContentView: View {
 
     // MARK: - Header
 
+    /// Two rows that answer two different questions, in the order they are
+    /// asked: «чем я вооружён» before the call, «что происходит сейчас» during
+    /// it — and the controls that switch between the two states.
+    ///
+    /// They share one header rather than sitting apart because they are read in
+    /// one glance and because the window has no room for a second block of
+    /// chrome. The strip costs about eighteen points; everything below it is
+    /// untouched, and the suggestion feed — which takes whatever is left — pays
+    /// for those eighteen.
     private var header: some View {
-        HStack(spacing: 8) {
-            ChannelIndicatorsView(indicators: indicators)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                ChannelIndicatorsView(indicators: indicators)
 
-            Spacer(minLength: 12)
+                Spacer(minLength: 12)
 
-            listenButton
-            settingsButton
+                listenButton
+                settingsButton
+            }
+
+            precallStrip
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    /// The readiness strip — see `PrecallStripView` for why it is one line and
+    /// how it stays out of the indicators' way.
+    @ViewBuilder
+    private var precallStrip: some View {
+        if let settings {
+            PrecallStripView(settings: settings, openSettings: openSettings)
+        }
     }
 
     /// The state of both channels and of the model, recomputed from the session
@@ -120,7 +152,8 @@ struct ContentView: View {
     }
 
     private var settingsButton: some View {
-        Button { openSettings() } label: {
+        // No section: the gear is a way into settings, not a way to a control.
+        Button { openSettings(nil) } label: {
             Image(systemName: "gearshape")
                 .font(.system(size: 12))
         }
@@ -390,12 +423,14 @@ struct ContentView: View {
             session: session,
             recognition: recognition,
             hotkeys: hotkeys,
-            openSettings: {}
+            openSettings: { _ in },
+            settings: settings
         ),
         session: session,
         recognition: recognition,
+        settings: settings,
         hotkeys: hotkeys,
-        openSettings: {}
+        openSettings: { _ in }
     )
     .frame(width: 420, height: 520)
 }

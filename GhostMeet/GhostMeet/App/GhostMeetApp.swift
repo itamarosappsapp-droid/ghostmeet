@@ -80,7 +80,10 @@ final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
         session: session,
         recognition: recognition,
         hotkeys: hotkeys,
-        openSettings: { [weak self] in self?.settingsWindowController.show() },
+        openSettings: { [weak self] section in self?.settingsWindowController.show(section) },
+        // The readiness strip reads the same store the settings screen edits —
+        // there is one, and the strip must not be able to disagree with it.
+        settings: settings,
         stateStore: WindowStateStore(defaults: defaults)
     )
 
