@@ -27,6 +27,15 @@ final class SessionController {
     /// A start is in flight — the system permission dialog may be up.
     private(set) var isStarting = false
 
+    /// What the `Them` channel is doing, in the channel's own words.
+    ///
+    /// Kept here rather than read off the source, because the source publishes it
+    /// from an arbitrary thread and the overlay reads it on the main actor. Until
+    /// ticket 10 this travelled to the unified log and nowhere else, which meant
+    /// the one failure the user cannot hear — a channel that never started — was
+    /// visible to us and invisible to them.
+    var themStatus: ThemCaptureStatus = .idle
+
     /// The engine itself, exposed so that later screens (suggestion feed,
     /// context clearing) can reach it without going through this type.
     let engine: SessionEngine
@@ -45,17 +54,27 @@ final class SessionController {
     /// without a notification of any kind.
     @ObservationIgnored private let isRecognitionReady: () -> Bool
 
+    /// Where the line between "the conversation" and "what the user asked to
+    /// forget" is kept. Shared with the composer, so clearing the context reaches
+    /// the model and not only the window.
+    let context: ConversationContext
+
     /// The start currently in flight, kept so that it can be waited for.
     @ObservationIgnored private var startTask: Task<Void, Never>?
 
     init(
         engine: SessionEngine,
         requestMicrophoneAccess: @escaping () async -> Bool = { await MicCaptureService.requestAccess() },
-        isRecognitionReady: @escaping () -> Bool = { true }
+        isRecognitionReady: @escaping () -> Bool = { true },
+        // Defaulted in the body rather than here: `ConversationContext` is
+        // main-actor isolated, and a default argument is evaluated outside any
+        // actor — the same reason `SessionEngine` defaults its composer this way.
+        context: ConversationContext? = nil
     ) {
         self.engine = engine
         self.requestMicrophoneAccess = requestMicrophoneAccess
         self.isRecognitionReady = isRecognitionReady
+        self.context = context ?? ConversationContext()
     }
 
     // MARK: - What the overlay reads
@@ -72,12 +91,36 @@ final class SessionController {
     var canStartListening: Bool { isRecognitionReady() }
 
     /// The transcript as it stands: turns of both channels in the order they
-    /// were closed.
-    var transcript: [Turn] { engine.transcript }
+    /// were closed, minus whatever the user cleared.
+    var transcript: [Turn] { context.remembered(engine.transcript) }
 
     /// The suggestion feed, oldest first. The last one is the answer to the
     /// question just asked and is the one the overlay highlights.
-    var suggestions: [Suggestion] { engine.suggestions }
+    var suggestions: [Suggestion] { context.remembered(engine.suggestions) }
+
+    /// Whether the model is writing an answer right now — the "думает" state of
+    /// the indicators.
+    var isGenerating: Bool {
+        suggestions.last?.state == .streaming
+    }
+
+    /// The reason the last suggestion did not arrive, or `nil`.
+    var lastSuggestionFailure: String? {
+        guard case .failed(let reason) = suggestions.last?.state else { return nil }
+        return reason
+    }
+
+    // MARK: - Clearing the context
+
+    /// Forgets the conversation so far: the transcript, the suggestions, and what
+    /// the next prompt is built from.
+    ///
+    /// The `Профиль` is untouched by construction — it lives in `SettingsStore`,
+    /// not here, and belongs to the user rather than to the call. Listening is
+    /// untouched too: this is "start the conversation over", not "stop".
+    func clearContext() {
+        context.forget(turns: engine.transcript, suggestions: engine.suggestions)
+    }
 
     // MARK: - Start and stop
 
@@ -208,6 +251,73 @@ final class SessionController {
     }
 }
 
+/// The line between the conversation and what the user asked to forget.
+///
+/// Clearing the context is a decision of the session, not of the recorder:
+/// `SessionEngine` keeps the raw record of the call, and this type says which
+/// part of it still counts. Everything that reads the conversation goes through
+/// it — the overlay, and, through `ContextLimitedComposer`, the prompt. Clearing
+/// that only emptied the window would be a lie: the model would go on answering
+/// with the very context the user just asked it to forget.
+///
+/// Turns are remembered by identity rather than by a cut-off time. Their
+/// timestamps come from the session clock and their text arrives later, when
+/// recognition finishes — a turn that was closed before the clear and
+/// transcribed after it still belongs to the part that was forgotten.
+@MainActor
+@Observable
+final class ConversationContext {
+
+    private(set) var forgottenTurns: Set<Turn.ID> = []
+    private(set) var forgottenSuggestions: Set<Suggestion.ID> = []
+
+    init() {}
+
+    /// Marks everything currently on the record as forgotten.
+    func forget(turns: [Turn], suggestions: [Suggestion]) {
+        forgottenTurns.formUnion(turns.map(\.id))
+        forgottenSuggestions.formUnion(suggestions.map(\.id))
+    }
+
+    func remembered(_ turns: [Turn]) -> [Turn] {
+        guard !forgottenTurns.isEmpty else { return turns }
+        return turns.filter { !forgottenTurns.contains($0.id) }
+    }
+
+    func remembered(_ suggestions: [Suggestion]) -> [Suggestion] {
+        guard !forgottenSuggestions.isEmpty else { return suggestions }
+        return suggestions.filter { !forgottenSuggestions.contains($0.id) }
+    }
+}
+
+/// A composer that only ever sees the part of the transcript the user still
+/// wants the model to know about.
+///
+/// It wraps the real composer instead of being one: how many turns a mode reads
+/// and what it says to the model stays in the prompt layer, and "which turns
+/// exist at all" is a question of the session.
+@MainActor
+struct ContextLimitedComposer: SuggestionComposer {
+
+    let context: ConversationContext
+    let wrapped: any SuggestionComposer
+
+    func compose(
+        transcript: [Turn],
+        screen: ScreenContext,
+        accepting capabilities: ProviderCapabilities
+    ) -> SuggestionRequest {
+        wrapped.compose(
+            transcript: context.remembered(transcript),
+            // The screen is deliberately *not* filtered: it shows what is in
+            // front of the user at this instant, and clearing the conversation
+            // says nothing about it.
+            screen: screen,
+            accepting: capabilities
+        )
+    }
+}
+
 extension SessionController {
 
     /// Why the session is not listening.
@@ -278,27 +388,45 @@ extension SessionController {
         them.followSourceSelection(of: settings)
         them.followCaptureBackend(of: settings)
 
-        // This status is the only place the `Them` side says why it is quiet, and
-        // no window consumes it yet (that is ticket 10). Logged deliberately: a
-        // channel that goes silent mid-call is the one failure the user cannot
-        // see, and the message already names the backend and the reason.
-        them.onStatusChange = { [weak them] status in
-            let backend = them?.backend.displayName ?? "—"
-            Logger(subsystem: "Mixxy.GhostMeet", category: "capture")
-                .info("КАНАЛ THEM (\(backend, privacy: .public)): \(status.message, privacy: .public)")
-        }
+        // One context object for the whole session, shared by the two things
+        // that have to agree about what was cleared: the window, which shows the
+        // conversation, and the composer, which turns it into a prompt.
+        let context = ConversationContext()
 
-        return SessionController(
+        let controller = SessionController(
             engine: SessionEngine(
                 sources: [MicCaptureService(voiceProcessing: voiceProcessing), them],
                 recognizer: recognizer,
                 provider: provider ?? (try? settings.makeProvider()),
                 // The profile is read at request time rather than captured, so
                 // editing it mid-call takes effect on the next suggestion.
-                composer: AssistSuggestionComposer { settings.profile },
+                composer: ContextLimitedComposer(
+                    context: context,
+                    wrapped: AssistSuggestionComposer { settings.profile }
+                ),
                 config: settings.turnSegmentation
             ),
-            isRecognitionReady: isRecognitionReady
+            isRecognitionReady: isRecognitionReady,
+            context: context
         )
+
+        // The `Them` side says why it is quiet here and only here. It goes two
+        // ways, both of them inside the app: into the overlay, which is where the
+        // user finds out that the channel never started, and into the unified
+        // log, which is the only trace left once the call is over. Never into a
+        // system banner — that would be drawn over the shared screen (ADR-0004).
+        controller.themStatus = them.status
+        them.onStatusChange = { [weak them, weak controller] status in
+            let backend = them?.backend.displayName ?? "—"
+            Logger(subsystem: "Mixxy.GhostMeet", category: "capture")
+                .info("КАНАЛ THEM (\(backend, privacy: .public)): \(status.message, privacy: .public)")
+            // Statuses arrive from capture threads; the overlay reads this on the
+            // main actor. The same hop `SessionEngine` makes for audio frames.
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { controller?.themStatus = status }
+            }
+        }
+
+        return controller
     }
 }

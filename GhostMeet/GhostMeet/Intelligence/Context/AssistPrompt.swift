@@ -29,17 +29,30 @@ nonisolated enum AssistPrompt {
     /// the screen alone if that is all there is.
     static let emptyTranscriptPlaceholder = "(разговор пока не записан)"
 
+    /// Heading of the block that carries what Vision read off the screen.
+    ///
+    /// Same wording as the `Solve on screen` prompt in docs/GhostMeet-Prompts.md
+    /// §6 — one thing, one name, whichever mode is asking.
+    static let screenTextHeading = "Текст с экрана (OCR):"
+
     /// One assembled request. Every mode-specific decision — prompt, window
     /// size, token budget — is made here, which is why `LLMProvider` needs to
     /// know nothing about modes.
+    ///
+    /// The two halves of the screen arrive separately because they do not
+    /// travel together: `screenText` goes to every backend, `screenshot` only to
+    /// one that accepts images. Dropping the picture is the caller's decision —
+    /// it is the one that knows the provider — and by the time a request exists
+    /// it has been made.
     static func request(
         transcript: [Turn],
         profile: UserProfile,
+        screenText: String = "",
         screenshot: Data? = nil
     ) -> SuggestionRequest {
         SuggestionRequest(
             systemPrompt: system(profile: profile),
-            userPrompt: user(transcript: transcript),
+            userPrompt: user(transcript: transcript, screenText: screenText),
             screenshot: screenshot,
             maxTokens: maxTokens
         )
@@ -60,13 +73,20 @@ nonisolated enum AssistPrompt {
         """
     }
 
-    /// The transcript window plus the ask.
-    static func user(transcript: [Turn]) -> String {
+    /// The transcript window, what is written on the screen, and the ask.
+    ///
+    /// The screen block is omitted rather than left empty when there is no text:
+    /// an empty heading reads to the model as "the screen is blank", which is a
+    /// different and usually wrong statement about a screen that simply could
+    /// not be grabbed.
+    static func user(transcript: [Turn], screenText: String = "") -> String {
         let window = TranscriptFormatter.format(transcript, limit: transcriptWindow)
+        let screen = screenText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let screenBlock = screen.isEmpty ? "" : "\n\(screenTextHeading)\n\(screen)\n"
         return """
         Недавний разговор:
         \(window.isEmpty ? emptyTranscriptPlaceholder : window)
-
+        \(screenBlock)
         Сделай то, что нужно мне прямо сейчас.
         """
     }

@@ -31,7 +31,8 @@ final class SessionEngine {
     private(set) var suggestions: [Suggestion] = []
     /// Whether capture is running.
     private(set) var isListening = false
-    /// Last capture failure, shown inside the window and nowhere else.
+    /// Last capture failure — of audio or of the screen — shown inside the
+    /// window and nowhere else.
     private(set) var lastError: String?
 
     /// Segmentation thresholds. Changing them takes effect on the turns that
@@ -58,6 +59,12 @@ final class SessionEngine {
 
     private let recognizer: SpeechRecognizer
     private let sources: [AudioSource]
+    /// Where the screenshot and the text on it come from.
+    ///
+    /// Behind a protocol for the same reason capture and speech are (ADR-0001):
+    /// the engine must be drivable without a display server or a Screen
+    /// Recording grant, and a test has to be able to say what the screen showed.
+    private let capturer: any ScreenCapturer
     /// The model behind the suggestions. Optional because the app has to be
     /// usable — capture, transcript, settings — before a provider is configured;
     /// with none, a closed `Them` turn simply asks for nothing.
@@ -84,6 +91,7 @@ final class SessionEngine {
         // Defaulted in the body rather than here: the composer is main-actor
         // isolated, and a default argument is evaluated outside any actor.
         composer: (any SuggestionComposer)? = nil,
+        capturer: (any ScreenCapturer)? = nil,
         clock: SessionClock = SystemClock(),
         config: TurnSegmentationConfig = .default
     ) {
@@ -91,6 +99,7 @@ final class SessionEngine {
         self.recognizer = recognizer
         self.provider = provider
         self.composer = composer ?? AssistSuggestionComposer()
+        self.capturer = capturer ?? ScreenCaptureService()
         self.clock = clock
         self.config = config
         self.segmenters = Dictionary(
@@ -197,6 +206,17 @@ final class SessionEngine {
 
     private func recognize(turn id: Turn.ID, on channel: Channel, audio: SpeechAudio) {
         let recognizer = recognizer
+
+        // The screen is grabbed the instant the interlocutor stopped talking,
+        // beside recognition rather than after it. Two reasons, and both matter:
+        // this is the screen the question was asked about, and the proactive
+        // loop exists for speed — running it in parallel puts the screenshot and
+        // the OCR inside the time speech recognition takes instead of adding
+        // them in front of the first token.
+        let screen: Task<ScreenContext, Never>? = channel == .them && provider != nil
+            ? Task { [capturer] in await capturer.capture() }
+            : nil
+
         let task = Task { [weak self] in
             // A failed pass leaves the turn in place with no text: losing a turn
             // would be worse than showing one without words.
@@ -208,7 +228,10 @@ final class SessionEngine {
             // own, with the words of that very turn already in the transcript.
             // A closed `You` turn asks for nothing — the user is answering, and
             // whatever is on screen is their crib sheet (ADR-0003).
-            if channel == .them { self?.startSuggestion(promptedBy: id) }
+            guard channel == .them, let screen else { return }
+            let context = await screen.value
+            guard !Task.isCancelled else { return }
+            self?.startSuggestion(promptedBy: id, screen: context)
         }
         recognitionInFlight.append(task)
     }
@@ -225,10 +248,25 @@ final class SessionEngine {
     /// The suggestion is appended empty and `streaming`, before a single
     /// fragment has arrived: that is what lets the window show the answer being
     /// written instead of a spinner followed by a wall of text.
-    private func startSuggestion(promptedBy turn: Turn.ID?) {
+    private func startSuggestion(promptedBy turn: Turn.ID?, screen: ScreenContext) {
         guard let provider else { return }
 
-        let request = composer.compose(transcript: transcript)
+        // A screen that could not be grabbed is reported and then stepped over:
+        // the request goes out without a picture rather than not at all
+        // (ADR-0003). The reason lives in the window and nowhere else — a system
+        // banner would be drawn over the shared screen (ADR-0004).
+        //
+        // Cleared on a capture that worked, so a one-off failure does not leave
+        // a sentence on screen for the rest of the call. Nothing else writes
+        // here mid-session: an audio source that fails to start throws out of
+        // `start()` and there is no session to report into.
+        lastError = screen.failure
+
+        let request = composer.compose(
+            transcript: transcript,
+            screen: screen,
+            accepting: provider.capabilities
+        )
         let suggestion = Suggestion(promptedBy: turn, startedAt: Date())
         suggestions.append(suggestion)
 

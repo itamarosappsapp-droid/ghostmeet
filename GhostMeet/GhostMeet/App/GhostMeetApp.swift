@@ -68,9 +68,18 @@ final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
         recognition: recognition
     )
 
+    /// The four global chords and what they do.
+    ///
+    /// Built on Carbon's `RegisterEventHotKey`, which needs **no permission** —
+    /// see `CarbonHotkeyRegistry`. The app already asks for four grants; a fifth
+    /// (Accessibility, which `NSEvent`'s global monitor requires) for a secondary
+    /// control path is not a trade worth making.
+    private lazy var hotkeys = HotkeyCenter(store: settings)
+
     private lazy var overlayWindowController = OverlayWindowController(
         session: session,
         recognition: recognition,
+        hotkeys: hotkeys,
         openSettings: { [weak self] in self?.settingsWindowController.show() },
         stateStore: WindowStateStore(defaults: defaults)
     )
@@ -113,7 +122,32 @@ final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
         // come up before the user has asked for anything, and the first thing
         // they see would be a permission dialog rather than the overlay.
 
+        wireHotkeys()
+
         overlayWindowController.show()
+    }
+
+    /// Connects the four chords to the things they drive, and registers them
+    /// with the system.
+    ///
+    /// The composition root is the only place that knows all three participants:
+    /// the window (panic), the session (listening) and the conversation
+    /// (clearing). `HotkeyCenter` deliberately knows none of them.
+    private func wireHotkeys() {
+        hotkeys.actions = HotkeyActions(
+            // Hiding is only the window. Capture keeps running — see
+            // `OverlayWindowController.toggleVisibility()`.
+            toggleVisibility: { [weak self] in self?.overlayWindowController.toggleVisibility() },
+            // `startWhenRecognitionIsReady()` and not `start()`: a chord pressed
+            // while the model is still loading has to mean "listen to this call",
+            // not "listen now, or silently do nothing". A turn closed before the
+            // model is ready is refused outright, so the plain `start()` here
+            // would cost the user the opening question of the interview.
+            startListening: { [weak self] in self?.session.startWhenRecognitionIsReady() },
+            stopListening: { [weak self] in self?.session.stop() },
+            clearContext: { [weak self] in self?.session.clearContext() }
+        )
+        hotkeys.activate()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

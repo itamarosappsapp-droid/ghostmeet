@@ -25,6 +25,11 @@ struct ContentView: View {
     /// a disabled button with no visible reason reads as a broken app.
     let recognition: SpeechModelStatus
 
+    /// The global chords and their bindings. Shown here so that the one thing a
+    /// user needs after pressing the panic key — the chord that brings the window
+    /// back — is written down in the window itself.
+    let hotkeys: HotkeyCenter
+
     /// Opens the settings window. In accessory mode there is no menu bar, so
     /// this button is the only way in.
     let openSettings: () -> Void
@@ -35,6 +40,7 @@ struct ContentView: View {
             Divider().opacity(0.4)
             recognitionNotice
             failureNotice
+            themNotice
             suggestions
             Divider().opacity(0.4)
             transcript
@@ -50,14 +56,7 @@ struct ContentView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            // TODO(10 — Хоткеи, паника и индикаторы): per-channel state here
-            // (слушает / думает / ошибка) instead of one dot for the session.
-            Circle()
-                .fill(statusColor)
-                .frame(width: 7, height: 7)
-
-            Text("GhostMeet")
-                .font(.system(size: 12, weight: .semibold))
+            ChannelIndicatorsView(indicators: indicators)
 
             Spacer(minLength: 12)
 
@@ -68,12 +67,18 @@ struct ContentView: View {
         .padding(.vertical, 8)
     }
 
-    private var statusColor: Color {
-        if session.failure != nil { return .orange }
-        if session.isListening { return .green }
-        // Not ready is not an error, but it is not "idle, press me" either: the
-        // dot is the one thing visible at a glance from across the desk.
-        return isModelReady ? .secondary : .yellow
+    /// The state of both channels and of the model, recomputed from the session
+    /// on every redraw. Nothing about it is stored: an indicator that can go
+    /// stale is worse than no indicator.
+    private var indicators: SessionIndicators {
+        SessionIndicators.make(
+            isListening: session.isListening,
+            failure: session.failure,
+            recognition: recognition.phase,
+            themStatus: session.themStatus,
+            isGenerating: session.isGenerating,
+            suggestionFailure: session.lastSuggestionFailure
+        )
     }
 
     private var isModelReady: Bool { recognition.phase.isReady }
@@ -223,6 +228,62 @@ struct ContentView: View {
         NSWorkspace.shared.open(url)
     }
 
+    // MARK: - The Them channel
+
+    /// What the `Them` channel is doing, whenever that is not simply "слушаю".
+    ///
+    /// This is the one failure of the app the user cannot hear: the microphone
+    /// works, the transcript fills with their own turns, and the other side is
+    /// silent for a reason nobody stated. Until now the reason went to the
+    /// unified log and nowhere else.
+    ///
+    /// Inside the window and nowhere else, like every other report here: a
+    /// notification banner would be drawn over the shared screen (ADR-0004).
+    @ViewBuilder
+    private var themNotice: some View {
+        let them = indicators.them
+        if them.state.deservesAnExplanation {
+            VStack(alignment: .leading, spacing: 6) {
+                Label {
+                    Text(them.detail)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: them.state == .failed
+                        ? "exclamationmark.triangle.fill"
+                        : "speaker.slash")
+                }
+                .font(.system(size: 11))
+
+                if isThemBlockedByScreenRecording {
+                    Button("Открыть настройки записи экрана") { openScreenRecordingPrivacySettings() }
+                        .controlSize(.small)
+                        .font(.system(size: 11))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                them.state == .failed ? Color.orange.opacity(0.15) : Color.yellow.opacity(0.12)
+            )
+        }
+    }
+
+    /// Whether the channel is silent because Screen Recording was never granted.
+    ///
+    /// Compared against the very constant the capture layer publishes, so this
+    /// cannot drift into offering the button for an unrelated failure.
+    private var isThemBlockedByScreenRecording: Bool {
+        session.themStatus == .failed(reason: ThemCaptureBackend.screenRecordingHelp)
+    }
+
+    private func openScreenRecordingPrivacySettings() {
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        ) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
     // MARK: - Suggestions
 
     /// The main content of the window: what the model is answering right now.
@@ -249,6 +310,7 @@ struct ContentView: View {
     private var footer: some View {
         VStack(alignment: .leading, spacing: 6) {
             opacityControl
+            HotkeysSectionView(hotkeys: hotkeys)
             sharingScopeNote
         }
         .padding(.horizontal, 12)
@@ -298,21 +360,26 @@ struct ContentView: View {
     // controls, without asking the previewing machine for its microphone.
     let session = SessionController(engine: SessionEngine(), requestMicrophoneAccess: { false })
     // A throwaway settings suite, so previewing never rewrites the user's own
-    // model choice. Nothing calls `prepare()`, so no gigabytes move either.
-    let recognition = SpeechModelStatus(
-        store: SettingsStore(
-            defaults: UserDefaults(suiteName: "GhostMeetOverlayPreview") ?? .standard,
-            secrets: InMemorySecretStore()
-        )
+    // model choice or hotkeys. Nothing calls `prepare()`, so no gigabytes move
+    // either.
+    let settings = SettingsStore(
+        defaults: UserDefaults(suiteName: "GhostMeetOverlayPreview") ?? .standard,
+        secrets: InMemorySecretStore()
     )
+    let recognition = SpeechModelStatus(store: settings)
+    // A registry that registers nothing: previewing must not take four chords
+    // away from the machine running Xcode.
+    let hotkeys = HotkeyCenter(store: settings, registry: InertHotkeyRegistry())
     ContentView(
         controller: OverlayWindowController(
             session: session,
             recognition: recognition,
+            hotkeys: hotkeys,
             openSettings: {}
         ),
         session: session,
         recognition: recognition,
+        hotkeys: hotkeys,
         openSettings: {}
     )
     .frame(width: 420, height: 520)

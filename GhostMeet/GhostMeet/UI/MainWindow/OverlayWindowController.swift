@@ -30,6 +30,11 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
     /// overlay is the only place the user can see it mid-call.
     private let recognition: SpeechModelStatus
 
+    /// The global chords. Passed straight through to the content view, which is
+    /// where they are re-bound — the panic key hides this very window, so the
+    /// chord that brings it back has to be written down inside it.
+    private let hotkeys: HotkeyCenter
+
     /// Opening the settings window is somebody else's job — the overlay only
     /// has the button. In accessory mode there is no menu bar to put it in.
     private let openSettings: () -> Void
@@ -41,12 +46,14 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
     init(
         session: SessionController,
         recognition: SpeechModelStatus,
+        hotkeys: HotkeyCenter,
         openSettings: @escaping () -> Void,
         configuration: OverlayWindowConfiguration = .overlay,
         stateStore: WindowStateStore = WindowStateStore()
     ) {
         self.session = session
         self.recognition = recognition
+        self.hotkeys = hotkeys
         self.openSettings = openSettings
         self.configuration = configuration
         self.stateStore = stateStore
@@ -74,7 +81,14 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
         panel?.orderOut(nil)
     }
 
-    /// Backing action for the show/hide (panic) hotkey — ticket 10.
+    /// Backing action for the show/hide (panic) hotkey.
+    ///
+    /// **Hiding stops nothing but the window.** Capture keeps running, turns keep
+    /// closing, suggestions keep arriving — the user pressed this because
+    /// somebody walked up behind them, not because the interview ended, and a
+    /// panic key that also dropped the session would cost them the next question.
+    /// `applicationShouldTerminateAfterLastWindowClosed` returns `false` for the
+    /// same reason.
     func toggleVisibility() {
         isVisible ? hide() : show()
     }
@@ -103,6 +117,7 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
                 controller: self,
                 session: session,
                 recognition: recognition,
+                hotkeys: hotkeys,
                 openSettings: openSettings
             )
         )

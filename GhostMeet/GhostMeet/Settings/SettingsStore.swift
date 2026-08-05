@@ -53,6 +53,7 @@ final class SettingsStore {
         static let themSourceApplication = "settings.themSourceApplication"
         static let themCaptureBackend = "settings.themCaptureBackend"
         static let providerSelection = "settings.providerSelection"
+        static let hotkeys = "settings.hotkeys"
     }
 
     // MARK: - Persisted, user-scoped state
@@ -118,6 +119,20 @@ final class SettingsStore {
     /// composition root already reads it, and because a future backend may yet
     /// have a real reason to ask.
     var allowsVoiceProcessing: Bool { true }
+
+    /// Which chord runs which global action.
+    ///
+    /// User-scoped like everything else here: hotkeys are muscle memory, and
+    /// muscle memory that resets between calls is worse than no hotkeys at all.
+    ///
+    /// Stored whole rather than key by key, so that an action the user
+    /// deliberately left **without** a chord stays without one: a per-action
+    /// fallback to the default would quietly hand the combination back at the
+    /// next launch. The shipped defaults apply only when nothing has ever been
+    /// written here.
+    var hotkeys: HotkeyBindings {
+        didSet { persist(hotkeys, forKey: DefaultsKey.hotkeys) }
+    }
 
     /// Which model answers, plus the overrides the user typed over the preset.
     ///
@@ -219,6 +234,8 @@ final class SettingsStore {
         self.themSourceApplicationID = defaults.string(forKey: DefaultsKey.themSourceApplication)
         self.themCaptureBackend = defaults.string(forKey: DefaultsKey.themCaptureBackend)
             .flatMap(ThemCaptureBackend.init(rawValue:)) ?? .default
+        self.hotkeys = Self.decode(HotkeyBindings.self, from: defaults, key: DefaultsKey.hotkeys)
+            ?? .default
         // A selection naming a provider that has since been removed falls back
         // to the default rather than leaving the app pointed at nothing.
         let stored = Self.decode(ProviderSelection.self, from: defaults, key: DefaultsKey.providerSelection)

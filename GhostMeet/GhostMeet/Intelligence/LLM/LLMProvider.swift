@@ -21,8 +21,12 @@ nonisolated struct SuggestionRequest: Equatable, Sendable {
     /// The assembled context: transcript window, question, OCR text.
     var userPrompt: String
 
-    /// PNG bytes of the screen, attached to the *user* message. Nil until
-    /// ticket 09 wires screen capture in.
+    /// PNG bytes of the screen, attached to the *user* message.
+    ///
+    /// Nil when the provider does not take images at all, or when the capture
+    /// failed — a suggestion without a screenshot beats no suggestion. The text
+    /// recognised from the screen travels in `userPrompt` either way, so a
+    /// text-only provider still knows what is on screen.
     var screenshot: Data?
 
     /// Budget for this mode. Say/Follow-up are cheap, Solve/Assist are not.

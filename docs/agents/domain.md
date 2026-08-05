@@ -17,11 +17,11 @@ Separately from the domain docs, `docs/GhostMeet.md` and `docs/GhostMeet-Prompts
 
 ```
 /
-├── CONTEXT.md                  ← glossary (not created yet)
+├── CONTEXT.md                  ← glossary
 ├── docs/
 │   ├── GhostMeet.md            ← product spec
 │   ├── GhostMeet-Prompts.md    ← LLM mode prompts
-│   ├── adr/                    ← architecture decisions (not created yet)
+│   ├── adr/                    ← architecture decisions (0001–0006)
 │   └── agents/                 ← this file and its siblings
 └── GhostMeet/                  ← Xcode project (SRCROOT)
     └── GhostMeet/              ← Swift sources

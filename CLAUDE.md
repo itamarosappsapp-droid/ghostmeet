@@ -8,11 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-The MVP pipeline runs end to end: both channels are captured, turns are cut on pauses, speech is recognised locally, and a closed `Them` turn starts a suggestion on its own. **246 tests** across 34 suites (Swift Testing, target `GhostMeetTests`).
+The MVP pipeline runs end to end: both channels are captured, turns are cut on pauses, speech is recognised locally, and a closed `Them` turn starts a suggestion on its own. **315 tests** across 47 suites (Swift Testing, target `GhostMeetTests`).
 
-Done: project skeleton and test target, microphone capture with VPIO, turn segmentation, WhisperKit recognition with model selection, the overlay window, the `Them` channel (both backends), settings with per-provider keys, the proactive `Assist` loop with a streaming Claude provider, and the full provider router (OpenAI-compatible family, Gemini, CLI tools).
+Done: project skeleton and test target, microphone capture with VPIO, turn segmentation, WhisperKit recognition with model selection, the overlay window, the `Them` channel (both backends, SCK by default), settings with per-provider keys, the proactive `Assist` loop with a streaming Claude provider, the full provider router (OpenAI-compatible family, Gemini, CLI tools), screenshot and OCR on every request, global hotkeys and per-channel indicators.
 
-Not done: cancelling a stale suggestion (ticket 08), screenshot and OCR in requests (09), hotkeys and state indicators (10), the manual `Ask` / `Solve on screen` modes (11). Tickets live in `.scratch/interview-mvp/`.
+Not done: cancelling a stale suggestion (ticket 08) and the manual `Ask` / `Solve on screen` modes (11). Tickets live in `.scratch/interview-mvp/`.
 
 The audio investigation is over and its scaffolding is gone: no diagnostics object, no level probes, no environment flags of our own. What survived it are the fixes it found — `MicCaptureService.firstChannel`, `ProcessTap.DeliveryFormat`, `PCMMixdown`, the mic tap installed with `format: nil` — and their regression tests. Logging is lifecycle-only now: capture start and failure (`SessionEngine`), `Them` channel status (`SessionController`), recognition model phase (`SpeechModelStatus`). Nothing per frame, nothing anybody said. Keep it that way — a per-frame log in this app writes the conversation to disk.
 
@@ -88,6 +88,35 @@ VPIO also **ducks all other system audio** while capturing, which both annoys th
 Four usage strings are declared: microphone (You channel), audio capture (Them channel via Process Tap), screen capture (Solve on screen), speech recognition (Apple Speech fallback). Note that macOS shows **no purpose string** for the Screen Recording prompt — `NSScreenCaptureUsageDescription` is declared for completeness, but the user will never read it.
 
 The app is signed with a **stable Apple Development identity** (personal team). This matters more than it looks: TCC grants are keyed to the signature, and while the project was ad-hoc signed every rebuild produced a new identity — macOS then re-prompted, or worse, reported the microphone as authorised and handed the app pure silence. If permissions start behaving oddly, check the signature first. Hardened Runtime is off; if it is ever enabled, microphone access will additionally require the `com.apple.security.device.audio-input` entitlement.
+
+## Обязательные правила работы
+
+Два правила, нарушение которых считается незакрытой работой, а не мелочью. Оба появились из реальных ошибок в этом проекте.
+
+### 1. Документы правятся тем же изменением, что и код
+
+**После каждой доработки — до того, как назвать её законченной — пройди по документам и приведи их в соответствие.** Не «когда-нибудь потом»: расходящиеся документ и код хуже отсутствующего документа, потому что им верят.
+
+Что проверять каждый раз:
+
+- `docs/GhostMeet.md` — спека продукта: возможности, стек, структура файлов, списки MVP/v1. **Структура файлов в ней — инструкция для агентов**, и если она врёт, следующий агент создаст файлы с несуществующими именами.
+- `docs/GhostMeet-Prompts.md` — авторитетные тексты промптов. Промпт в коде и промпт здесь обязаны совпадать дословно; правятся одним изменением.
+- `CONTEXT.md` — глоссарий. Новое понятие в коде без термина в глоссарии — источник будущего расползания синонимов.
+- `CLAUDE.md` — этот файл: состояние проекта, грабли, инварианты.
+- `.scratch/interview-mvp/` — тикеты и спека: статусы, критерии, комментарии о найденном.
+- **Ссылки между документами.** Относительные пути легко ломаются; из `.scratch/interview-mvp/issues/` до корня три уровня, а не два. Проверяй, что каждая ссылка ведёт в существующий файл.
+
+Отдельно: если по ходу работы выяснился факт, который стоил времени — неочевидное поведение системы, ловушка API, причина молчаливого отказа, — он идёт в документы. Час отладки, не оставивший следа в тексте, будет потрачен снова.
+
+### 2. ADR никогда не переписывается — выпускается новый
+
+**Решение, однажды записанное, не редактируется и не удаляется.** Чтобы изменить его, напиши **новый** ADR со следующим номером, который явно говорит, какой ADR он заменяет, и добавь в старый одну строку `status:` со ссылкой на заменяющий. Эта строка и короткая врезка-предупреждение — единственные допустимые правки заменённого ADR.
+
+Причина: ценность ADR не в том, что он описывает текущее положение дел, а в том, что он фиксирует **что было решено и на каком основании**. Переписав его, теряешь именно это — читатель больше не видит ни отменённого решения, ни причин, по которым оно казалось верным. В этом проекте так уже терялся ADR-0005, восстановленный потом по памяти.
+
+Что можно без нового ADR: дописать наблюдение, которое **не меняет решения** (например, «проверено вживую, держится»). Что нельзя: менять сам вывод, условия, при которых он верен, или его последствия — это новый ADR.
+
+Заменённый ADR остаётся в каталоге навсегда. Пример пары: [ADR-0005](docs/adr/0005-vpio-and-process-tap-cannot-coexist.md) и заменяющий его [ADR-0007](docs/adr/0007-vpio-and-process-tap-do-coexist.md).
 
 ## What GhostMeet is
 

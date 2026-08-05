@@ -89,19 +89,21 @@ Them: А почему не Mongo?
 - Регулируемая прозрачность, ресайз, сохранение позиции
 - Компактный / расширенный режим
 - **Лента подсказок** со скроллом: автоскролл к новой, последняя визуально выделена
-- Индикаторы: слушает / думает / ошибка; live-dot для dual-channel
+- Индикаторы по каналам (`You`, `Them`, модель): ничего не происходит / ждём / слушает / думает / ошибка. Состояние канала `Them` — «источник не выбран», «источник не выдаёт звук», «захват сломался» — показывается пользователю, а не только пишется в лог
 - Об ошибках приложение сообщает **только внутри своего окна** — никаких системных уведомлений, звуков и бейджей: баннер всплывёт поверх шаринга и выдаст присутствие приложения
 
 ### Горячие клавиши (настраиваемые)
 
 Основной способ получить подсказку — не хоткей: она появляется сама по паузе в речи собеседника. Хоткеи — вспомогательные.
 
-- Показать / скрыть (паника: прячет окно, захват при этом продолжается)
-- Assist («что сделать / что сказать сейчас»)
-- Скриншот → решить задачу
-- Старт/стоп listening
-- Очистить контекст
-- Прозрачность
+Реализованы на Carbon `RegisterEventHotKey`, а не на глобальном мониторе событий: монитор для системы — клавиатурный шпион и требует разрешения Accessibility, Carbon просит доставлять одну конкретную комбинацию и обходится без него. Пятого разрешения у пользователя не появляется.
+
+- Показать / скрыть — паника, прячет окно, захват продолжается (`⌘\`)
+- Старт прослушивания (`⌥⌘L`) — уважает готовность модели, а не стартует вслепую
+- Стоп прослушивания (`⌥⌘.`)
+- Очистить контекст (`⌥⌘K`) — забытые реплики не доезжают ни до окна, ни до модели
+
+Переназначаются и сохраняются. Комбинация без модификатора отвергается: глобальный хоткей перебивает активное приложение и отобрал бы у браузера обычный ввод.
 
 ### Скрытие при шаринге
 
@@ -120,7 +122,7 @@ Them: А почему не Mongo?
 │   UI (SwiftUI)  │   Audio Pipeline     │  Intelligence       │
 │                 │                      │                     │
 │ Always-on-top   │  Mic ──► You buffer  │  STT (WhisperKit)   │
-│ Opacity/Resize  │  ProcessTap ─► Them  │         ↓           │
+│ Opacity/Resize  │  SCK / Tap ─► Them   │         ↓           │
 │ Hotkeys         │         ↓            │  Transcript You/Them│
 │                 │  PCM queues          │         ↓           │
 │                 │                      │  Context + Summary  │
@@ -195,43 +197,58 @@ Them: А почему не Mongo?
 ## Структура проекта (нативный Swift)
 
 ```
-GhostMeet/
-├── App/
-│   ├── GhostMeetApp.swift
-│   └── AppState.swift
-├── UI/
-│   ├── MainWindow/          # always-on-top, opacity, resize
-│   ├── Settings/
-│   └── Components/
+GhostMeet/GhostMeet/          ← синхронизированная группа исходников
+├── App/                      # композиция и оркестрация сессии
+│   ├── GhostMeetApp.swift        # делегат: accessory-режим, проводка
+│   ├── SessionEngine.swift       # единственный шов: кадры → реплики → подсказки
+│   ├── SessionController.swift   # разрешения, старт/стоп, слежение за настройками
+│   ├── SuggestionComposer.swift  # движок не знает про режимы промптов
+│   ├── SettingsWindowController.swift
+│   └── AppDefaults.swift         # одноразовые настройки под тестами
 ├── Audio/
-│   ├── ProcessTapManager.swift    # Them (Core Audio Tap)
-│   ├── MicCaptureService.swift    # You
-│   ├── AudioCaptureService.swift  # оркестрация dual-channel
-│   ├── ProcessListService.swift
-│   └── AudioBufferQueue.swift     # отдельные очереди you/them
+│   ├── AudioSource.swift             # контракт захвата: кадры и канал
+│   ├── MicCaptureService.swift       # You: AVAudioEngine + VPIO
+│   ├── ThemAudioSource.swift         # контракт канала Them + выбор бэкенда
+│   ├── SwitchableThemSource.swift    # подмена бэкенда на лету
+│   ├── SCKCaptureService.swift       # Them через ScreenCaptureKit (дефолт)
+│   ├── SCKAudioStream.swift
+│   ├── ProcessTapCaptureService.swift # Them через Core Audio Process Tap
+│   ├── ProcessTap.swift
+│   ├── AudioProcess.swift            # процессы → приложения
+│   ├── AudioProcessLister.swift
+│   ├── SourceApplicationCatalog.swift # список для настроек
+│   ├── PCMMixdown.swift              # сведение буферов в моно
+│   └── TurnSegmenter.swift           # нарезка по паузе, гейт, страховочный флаш
 ├── Speech/
-│   ├── SpeechRecognitionService.swift
-│   ├── WhisperKitRecognizer.swift
-│   └── PartialResult.swift
+│   ├── SpeechRecognizer.swift        # контракт распознавания
+│   ├── WhisperSpeechRecognizer.swift
+│   ├── WhisperKitModelProvider.swift
+│   ├── WhisperModel.swift            # каталог моделей
+│   ├── SpeechModelStatus.swift       # фазы готовности для UI
+│   ├── SpeechModelPhase.swift
+│   └── StubSpeechRecognizer.swift
 ├── Intelligence/
 │   ├── Context/
-│   │   ├── ConversationContext.swift  # Turns You/Them + summary
-│   │   └── Summarizer.swift
+│   │   ├── Turn.swift                # реплика
+│   │   ├── Suggestion.swift          # подсказка и её состояния
+│   │   ├── AssistPrompt.swift        # сборка промпта режима Assist
+│   │   └── TranscriptFormatter.swift
 │   ├── LLM/
-│   │   ├── LLMProvider.swift
-│   │   ├── LLMRouter.swift
-│   │   └── Providers/ ...
-│   └── Screen/
-│       ├── ScreenCaptureService.swift
-│       ├── OCRService.swift
-│       └── TaskSolver.swift
-├── Input/
-│   └── HotkeyManager.swift
+│   │   ├── LLMProvider.swift         # контракт: стриминг + отмена
+│   │   ├── ProviderCatalog.swift     # транспорты, предустановки, возможности
+│   │   ├── ProviderFactory.swift     # выбор → провайдер
+│   │   ├── StreamingHTTPTransport.swift
+│   │   └── Providers/                # Claude, OpenAI-совместимые, Gemini, CLI
+│   └── Screen/                       # снимок экрана и текст с него
+├── Input/                            # глобальные хоткеи
 ├── Settings/
-│   └── SettingsStore.swift
-└── Utilities/
-    ├── PermissionsManager.swift
-    └── KeychainHelper.swift
+│   ├── SettingsStore.swift
+│   ├── UserProfile.swift             # Профиль
+│   └── TurnSegmentationConfig+Persistence.swift
+├── UI/
+│   ├── MainWindow/                   # оверлей, лента подсказок, транскрипт
+│   └── Settings/
+└── Utilities/                        # часы, Keychain, геометрия окна
 ```
 
 ---

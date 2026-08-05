@@ -21,9 +21,22 @@ protocol SuggestionComposer {
     /// Builds the request for one automatic suggestion.
     ///
     /// It cannot fail and it never refuses: an empty transcript is answered with
-    /// a placeholder, because a suggestion before the first recognised phrase is
-    /// worth more than a window that stays silent.
-    func compose(transcript: [Turn]) -> SuggestionRequest
+    /// a placeholder, and so is a screen that could not be grabbed, because a
+    /// suggestion built from half the context is worth more than a window that
+    /// stays silent (ADR-0003).
+    ///
+    /// The screen arrives already captured rather than being fetched here: the
+    /// engine starts it beside speech recognition so its cost is hidden, and
+    /// composing stays synchronous and pure.
+    ///
+    /// `capabilities` is what decides whether the picture may be attached at
+    /// all. This is the layer that drops it — a screenshot handed to a text-only
+    /// backend is a failed request, not a worse answer.
+    func compose(
+        transcript: [Turn],
+        screen: ScreenContext,
+        accepting capabilities: ProviderCapabilities
+    ) -> SuggestionRequest
 }
 
 /// The composer the proactive loop actually runs: mode `Assist`.
@@ -31,9 +44,9 @@ protocol SuggestionComposer {
 /// `Assist` needs no choosing — its prompt decides for itself whether the user
 /// needs a line to say out loud or the solution to the task on screen, which is
 /// why closing a `Them` turn can fire it blind. The wording, the window size and
-/// the token budget all belong to `AssistPrompt`; this type only supplies the
-/// two things that are session state rather than prompt: the transcript and the
-/// `Профиль`.
+/// the token budget all belong to `AssistPrompt`; this type adds the one thing
+/// neither the engine nor the prompt owns — the user's `Профиль` — and decides
+/// which half of the screen the chosen backend is allowed to see.
 struct AssistSuggestionComposer: SuggestionComposer {
 
     /// Read anew on every request, so a profile edited mid-call reaches the next
@@ -45,12 +58,19 @@ struct AssistSuggestionComposer: SuggestionComposer {
         self.profile = profile
     }
 
-    func compose(transcript: [Turn]) -> SuggestionRequest {
+    func compose(
+        transcript: [Turn],
+        screen: ScreenContext,
+        accepting capabilities: ProviderCapabilities
+    ) -> SuggestionRequest {
         AssistPrompt.request(
             transcript: transcript,
             profile: profile(),
-            // TODO(09 — Снимок экрана): every automatic request carries one.
-            screenshot: nil
+            // The words on screen reach every backend, including the ones that
+            // cannot take an image: for a local server or a CLI this is all they
+            // will ever know about what the user is looking at.
+            screenText: screen.text,
+            screenshot: capabilities.acceptsImages ? screen.image : nil
         )
     }
 }

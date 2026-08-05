@@ -189,6 +189,11 @@ private struct SuggestionCall {
             recognizer: RecognizerSpy(reply: text),
             provider: provider,
             composer: AssistSuggestionComposer { profile },
+            // No screen here: what this suite is about is what starts, cancels
+            // and settles a suggestion, and a real screenshot would put a
+            // display server and a TCC grant between the test and the answer.
+            // The screen has its own suite.
+            capturer: NoScreenCapturer(),
             clock: clock
         )
     }
