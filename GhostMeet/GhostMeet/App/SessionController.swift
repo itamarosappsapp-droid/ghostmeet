@@ -5,6 +5,7 @@
 
 import Foundation
 import Observation
+import os
 
 /// Everything that stands between the button in the overlay and `SessionEngine`.
 ///
@@ -34,20 +35,41 @@ final class SessionController {
     /// keeps no direct knowledge of `AVFoundation`.
     @ObservationIgnored private let requestMicrophoneAccess: () async -> Bool
 
+    /// Whether the recognition model can transcribe right now.
+    ///
+    /// A closure rather than the model status itself: everything below this type
+    /// sees `SpeechRecognizer` and must not learn that Whisper — or any
+    /// particular download — is behind it (ADR-0001). The closure reads an
+    /// `@Observable` phase in the app, which is what makes
+    /// `startWhenRecognitionIsReady()` and the button's enabled state follow it
+    /// without a notification of any kind.
+    @ObservationIgnored private let isRecognitionReady: () -> Bool
+
     /// The start currently in flight, kept so that it can be waited for.
     @ObservationIgnored private var startTask: Task<Void, Never>?
 
     init(
         engine: SessionEngine,
-        requestMicrophoneAccess: @escaping () async -> Bool = { await MicCaptureService.requestAccess() }
+        requestMicrophoneAccess: @escaping () async -> Bool = { await MicCaptureService.requestAccess() },
+        isRecognitionReady: @escaping () -> Bool = { true }
     ) {
         self.engine = engine
         self.requestMicrophoneAccess = requestMicrophoneAccess
+        self.isRecognitionReady = isRecognitionReady
     }
 
     // MARK: - What the overlay reads
 
     var isListening: Bool { engine.isListening }
+
+    /// Whether pressing "Слушать" would do anything.
+    ///
+    /// The overlay disables the button on this and prints the reason next to it.
+    /// The point is not tidiness: a turn closed before the model is loaded is
+    /// refused outright rather than queued (`WhisperSpeechRecognizer`), so
+    /// listening that starts a few seconds early does not merely lag — it drops
+    /// the opening question of the call, in full or in half.
+    var canStartListening: Bool { isRecognitionReady() }
 
     /// The transcript as it stands: turns of both channels in the order they
     /// were closed.
@@ -68,8 +90,16 @@ final class SessionController {
     /// Access is requested every time rather than once at launch: a user who
     /// declined can grant it in System Settings and press the button again
     /// without restarting the app.
+    ///
+    /// A model that is not ready stops the start before the microphone is even
+    /// asked for — there is nothing to transcribe with, and the permission
+    /// dialog would be pure noise. Nothing is recorded in `failure` for it: the
+    /// reason is already on screen next to the disabled button, it is temporary
+    /// by nature, and a `failure` set here would still be sitting in the window
+    /// seconds later when the model has long been ready.
     func start() {
         guard !isListening, !isStarting else { return }
+        guard isRecognitionReady() else { return }
         failure = nil
         isStarting = true
         startTask = Task { [weak self] in
@@ -96,6 +126,27 @@ final class SessionController {
     /// `SessionEngine.waitForRecognition()`.
     func waitForStart() async {
         await startTask?.value
+    }
+
+    /// Starts listening the moment the recognition model becomes usable, and not
+    /// a moment earlier.
+    ///
+    /// For callers that mean "listen to this call" rather than "listen now" — the
+    /// autostart lever, and later the hotkey pressed while the model is still
+    /// loading. Calling `start()` there would silently do nothing; this waits
+    /// instead, using the same observation trick as `followThresholds(of:)`.
+    func startWhenRecognitionIsReady() {
+        guard !isListening, !isStarting else { return }
+        let ready = withObservationTracking {
+            isRecognitionReady()
+        } onChange: { [weak self] in
+            // `onChange` fires *before* the new value is stored, so re-reading
+            // has to wait for the next turn of the main actor.
+            Task { @MainActor [weak self] in
+                self?.startWhenRecognitionIsReady()
+            }
+        }
+        if ready { start() }
     }
 
     /// Stops capture and closes the turn that was in progress.
@@ -192,32 +243,74 @@ extension SessionController {
     /// this signature or the engine changing. `provider` is a parameter so that
     /// a test can put a stub in the same slot.
     ///
-    /// `Them` follows the settings screen on its own: re-pointing the tap at
-    /// another application mid-call needs no restart of the session.
+    /// `Them` follows the settings screen on its own, in both of the ways it
+    /// can be re-pointed: at another application, and at the other capture
+    /// backend. Neither needs the session restarted, let alone the app.
     ///
     /// The model is whichever one the settings screen selected, built through
     /// `ProviderFactory` — never a hard-wired Claude. `provider` overrides it so
     /// that a test can put a stub in the same slot; when it does, nothing should
     /// call `followProviderSelection(of:)` on the result, or the stub would be
     /// replaced by the user's choice.
+    ///
+    /// `isRecognitionReady` is the same kind of seam: the app passes the
+    /// observable phase of the model it just built, a test passes a constant.
+    /// It defaults to "ready" so that a test about providers or thresholds does
+    /// not have to know that recognition has a warm-up at all.
     static func dualChannel(
         settings: SettingsStore,
         recognizer: SpeechRecognizer,
+        isRecognitionReady: @escaping () -> Bool = { true },
         provider: (any LLMProvider)? = nil
     ) -> SessionController {
-        let them = ProcessTapCaptureService()
+        // Which backend feeds `Them` decides whether the microphone may keep its
+        // echo cancellation: voice processing and the Core Audio process tap
+        // cannot both run (ADR-0005). ScreenCaptureKit does not build an
+        // aggregate device around the output device — the suspected cause — so
+        // with that backend the defence stays on. `SettingsStore` owns the rule.
+        var voiceProcessing = settings.allowsVoiceProcessing
+
+        // Temporary lever for the ADR-0005 experiment: the two backends have to
+        // be measured with echo cancellation forced both ways, and the honest
+        // rule above deliberately does not allow that combination. Remove with
+        // `CaptureDiagnostics`.
+        if let forced = ProcessInfo.processInfo.environment["GHOSTMEET_VPIO"] {
+            voiceProcessing = forced == "1"
+        }
+
+        // One source for the whole life of the engine, with the real backend
+        // swapped inside it. Which of the two it is stays a setting the user can
+        // change mid-call: they fail on different machines, and a choice that
+        // needed a relaunch would be made blind, once, and never revisited.
+        let them = SwitchableThemSource(backend: settings.themCaptureBackend)
         them.followSourceSelection(of: settings)
+        them.followCaptureBackend(of: settings)
+
+        // Temporary probe for the "hears nothing" investigation: this status is
+        // the only place the `Them` side says why it is quiet, and nothing
+        // consumes it yet (that is ticket 10). Remove with `CaptureDiagnostics`.
+        them.onStatusChange = { [weak them] status in
+            let backend = them?.backend.displayName ?? "—"
+            Logger(subsystem: "Mixxy.GhostMeet", category: "capture")
+                .info("КАНАЛ THEM (\(backend, privacy: .public)): \(status.message, privacy: .public)")
+        }
+        Logger(subsystem: "Mixxy.GhostMeet", category: "capture").info("""
+            СБОРКА бэкенд=\(settings.themCaptureBackend.displayName, privacy: .public) \
+            VPIO=\(voiceProcessing ? "вкл" : "выкл", privacy: .public) \
+            источник=\(settings.themSourceApplicationID ?? "—", privacy: .public)
+            """)
 
         return SessionController(
             engine: SessionEngine(
-                sources: [MicCaptureService(), them],
+                sources: [MicCaptureService(voiceProcessing: voiceProcessing), them],
                 recognizer: recognizer,
                 provider: provider ?? (try? settings.makeProvider()),
                 // The profile is read at request time rather than captured, so
                 // editing it mid-call takes effect on the next suggestion.
                 composer: AssistSuggestionComposer { settings.profile },
                 config: settings.turnSegmentation
-            )
+            ),
+            isRecognitionReady: isRecognitionReady
         )
     }
 }

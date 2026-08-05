@@ -22,7 +22,7 @@ macOS-приложение для real-time помощи во время вид�
 | Канал | Источник | Как захватываем |
 |--------|----------|-----------------|
 | **You** | Твой микрофон | AVAudioEngine / AVCaptureSession |
-| **Them** | Исходящий звук звонилки | **Core Audio Process Tap** на процесс Chrome / Telemost / Zoom / Teams |
+| **Them** | Исходящий звук звонилки | **ScreenCaptureKit** по умолчанию, Core Audio Process Tap — второй бэкенд |
 
 Потоки **никогда не смешиваются**. Каждый идёт в свой буфер → свой STT → в transcript с меткой канала:
 
@@ -34,15 +34,16 @@ Them: А почему не Mongo?
 
 Модель видит размеченный диалог и по system prompt понимает, за кого отвечать.
 
-**Почему Process Tap, а не getDisplayMedia loopback (как в cue):**
+**Почему не getDisplayMedia loopback (как в cue):**
 - Чище: только выбранное приложение, без уведомлений и музыки из других программ
 - Меньше риска, что твой голос попадёт в Them (нет loopback monitoring)
-- Узкое permission (Audio Capture), а не обязательно Screen Recording  
+
+Довод «узкое permission вместо Screen Recording», который был в исходной спеке, больше не работает: режим «Реши задачу» требует записи экрана в любом случае — см. [ADR-0006](adr/0006-screencapturekit-default-for-them.md).  
   Reference: [CallCapture](https://github.com/bodharma/callcapture), [Recap](https://github.com/RecapAI/Recap), [AudioCap](https://github.com/insidegui/AudioCap), [audiotee](https://github.com/makeusabrew/audiotee)
 
 Оговорка про гранулярность: и Process Tap, и ScreenCaptureKit работают на уровне **приложения**. Отделить вкладку со звонком от других вкладок того же браузера нельзя ни тем, ни другим способом — предполагается, что во время звонка в браузере не играет ничего постороннего.
 
-**Обе реализации делаются и переключаются в настройках** (см. [ADR-0001](adr/0001-swappable-backends-behind-protocols.md)): Process Tap — по умолчанию, ScreenCaptureKit — альтернатива и путь автоматического отката, если тап отвалился посреди звонка. Реализуются по очереди: сначала Process Tap через общий протокол захвата, потом SCK в готовый шов.
+**Обе реализации сделаны и переключаются в настройках** (см. [ADR-0001](adr/0001-swappable-backends-behind-protocols.md)): **ScreenCaptureKit — по умолчанию**, Process Tap — вторая. Дефолт поменялся по измерению: SCK отдаёт сигнал в 1.5–2.5 раза громче, потому что пригибание громкости от эхоподавления бьёт по тапу сильнее — см. [ADR-0006](adr/0006-screencapturekit-default-for-them.md). Тап остаётся нужен: он видит любой процесс со звуком, тогда как SCK — только оконные приложения.
 
 ### Speech-to-Text
 
@@ -182,7 +183,7 @@ Them: А почему не Mongo?
 |-----------|------------|-----------|
 | UI | SwiftUI + AppKit | — |
 | Always-on-top + hide | `NSWindow` level, `sharingType = .none` | [cue](https://github.com/Blueturboguy07/cue) (`setContentProtection`) |
-| Them audio | Core Audio Process Tap (дефолт) + ScreenCaptureKit | [CallCapture](https://github.com/bodharma/callcapture), [Recap](https://github.com/RecapAI/Recap), [AudioCap](https://github.com/insidegui/AudioCap), [Muesli](https://github.com/Muesli-HQ/muesli) |
+| Them audio | ScreenCaptureKit (дефолт) + Core Audio Process Tap | [CallCapture](https://github.com/bodharma/callcapture), [Recap](https://github.com/RecapAI/Recap), [AudioCap](https://github.com/insidegui/AudioCap), [Muesli](https://github.com/Muesli-HQ/muesli) |
 | You audio | AVAudioEngine + VPIO | Scripta, Muesli, стандарт Apple |
 | STT | WhisperKit (CoreML/ANE) + `SpeechAnalyzer` для англ. | [argmax-oss-swift](https://github.com/argmaxinc/argmax-oss-swift) |
 | OCR | Vision Framework | — |

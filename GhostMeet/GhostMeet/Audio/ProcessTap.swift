@@ -70,6 +70,45 @@ nonisolated final class ProcessTap: @unchecked Sendable {
     /// resolution to notice that the source application has been restarted.
     private(set) var tappedProcessObjectIDs: [AudioObjectID] = []
 
+    /// Derives the format the tap actually delivers from the buffer list it
+    /// hands over, and remembers it.
+    ///
+    /// A process tap reports its format up front, but the report is about the
+    /// stream, not about how the samples are laid out in memory. Chrome's tap
+    /// reports interleaved stereo and then delivers two separate channel
+    /// buffers. Building an `AVAudioPCMBuffer` over a mismatched layout returns
+    /// nil — silently — so every frame disappears with the IOProc running
+    /// perfectly. The buffer list is the only honest source.
+    private final class DeliveryFormat: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cached: AVAudioFormat?
+
+        func format(matching list: UnsafePointer<AudioBufferList>, sampleRate: Double) -> AVAudioFormat? {
+            lock.lock()
+            defer { lock.unlock() }
+            if let cached { return cached }
+
+            let planar = list.pointee.mNumberBuffers > 1
+            let channels = planar
+                ? list.pointee.mNumberBuffers
+                : list.pointee.mBuffers.mNumberChannels
+            guard channels > 0 else { return nil }
+
+            cached = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: sampleRate,
+                channels: AVAudioChannelCount(channels),
+                interleaved: !planar
+            )
+            return cached
+        }
+    }
+
+    private let delivery = DeliveryFormat()
+
+    /// Temporary probe — remove with `CaptureDiagnostics`.
+    private let probe = TapProbe()
+
     init() {}
 
     deinit { stop() }
@@ -142,12 +181,27 @@ nonisolated final class ProcessTap: @unchecked Sendable {
             &ioProcID,
             aggregateID,
             queue
-        ) { _, inputData, _, _, _ in
-            guard let buffer = AVAudioPCMBuffer(
-                pcmFormat: format,
-                bufferListNoCopy: inputData,
-                deallocator: nil
-            ), buffer.frameLength > 0 else { return }
+        ) { [delivery, probe] _, inputData, _, _, _ in
+            // The format the tap *reports* and the layout it *delivers* do not
+            // have to agree, and when they disagree nothing says so: the buffer
+            // simply fails to be built and the frame vanishes. Chrome's tap
+            // reports interleaved stereo and hands over two separate channel
+            // buffers, so the format is derived from the buffer list itself.
+            guard let deliveredFormat = delivery.format(
+                matching: inputData,
+                sampleRate: format.sampleRate
+            ) else { return }
+
+            let made = Self.monoBuffer(from: inputData, sampleRate: deliveredFormat.sampleRate)
+            probe.sawCallback(
+                buffers: inputData.pointee.mNumberBuffers,
+                bytes: inputData.pointee.mBuffers.mDataByteSize,
+                madeBuffer: made != nil,
+                frames: made?.frameLength ?? 0,
+                format: deliveredFormat
+            )
+
+            guard let buffer = made, buffer.frameLength > 0 else { return }
             onBuffer(buffer)
         }
         guard ioStatus == noErr, let ioProcID else {
@@ -164,6 +218,19 @@ nonisolated final class ProcessTap: @unchecked Sendable {
 
         tappedProcessObjectIDs = processObjectIDs
         isRunning = true
+    }
+
+
+    /// Copies the buffer list into a mono buffer we own.
+    ///
+    /// The trap it steps around — a capture whose reported format and delivered
+    /// layout disagree, with nil returned and no error — is the same one the
+    /// ScreenCaptureKit backend meets, so the fold itself lives in `PCMMixdown`.
+    private static func monoBuffer(
+        from list: UnsafePointer<AudioBufferList>,
+        sampleRate: Double
+    ) -> AVAudioPCMBuffer? {
+        PCMMixdown.mono(from: list, sampleRate: sampleRate)
     }
 
     /// Tears everything down in the reverse order it was built.

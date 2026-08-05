@@ -20,6 +20,11 @@ struct ContentView: View {
     /// The session: where the turns come from and what the listen button drives.
     let session: SessionController
 
+    /// How far the recognition model has got. Read here — and not only in
+    /// settings — because it decides whether the listen button works at all, and
+    /// a disabled button with no visible reason reads as a broken app.
+    let recognition: SpeechModelStatus
+
     /// Opens the settings window. In accessory mode there is no menu bar, so
     /// this button is the only way in.
     let openSettings: () -> Void
@@ -28,6 +33,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider().opacity(0.4)
+            recognitionNotice
             failureNotice
             suggestions
             Divider().opacity(0.4)
@@ -64,7 +70,20 @@ struct ContentView: View {
 
     private var statusColor: Color {
         if session.failure != nil { return .orange }
-        return session.isListening ? .green : .secondary
+        if session.isListening { return .green }
+        // Not ready is not an error, but it is not "idle, press me" either: the
+        // dot is the one thing visible at a glance from across the desk.
+        return isModelReady ? .secondary : .yellow
+    }
+
+    private var isModelReady: Bool { recognition.phase.isReady }
+
+    /// Whether pressing the button would do anything.
+    ///
+    /// Stopping is always allowed — only starting waits for the model.
+    private var canPressListen: Bool {
+        if session.isStarting { return false }
+        return session.isListening || session.canStartListening
     }
 
     private var listenButton: some View {
@@ -73,13 +92,24 @@ struct ContentView: View {
                 .font(.system(size: 11, weight: .medium))
         }
         .controlSize(.small)
-        .disabled(session.isStarting)
-        .help("Начать и остановить прослушивание микрофона — канал You. Кнопка ничего не отправляет в звонок.")
+        .disabled(!canPressListen)
+        .help(listenHelp)
     }
 
     private var listenTitle: String {
         if session.isStarting { return "Доступ…" }
-        return session.isListening ? "Стоп" : "Слушать"
+        if session.isListening { return "Стоп" }
+        // The word on a disabled button has to say why it is disabled — the
+        // reason below the header explains it, but the button is what the eye
+        // goes to first.
+        return isModelReady ? "Слушать" : "Подготовка…"
+    }
+
+    private var listenHelp: String {
+        if let reason = recognition.phase.listeningBlockedReason, !session.isListening {
+            return reason
+        }
+        return "Начать и остановить прослушивание микрофона — канал You. Кнопка ничего не отправляет в звонок."
     }
 
     private var settingsButton: some View {
@@ -89,6 +119,71 @@ struct ContentView: View {
         }
         .controlSize(.small)
         .help("Настройки: профиль, ключ провайдера, пороги нарезки реплик.")
+    }
+
+    // MARK: - Recognition readiness
+
+    /// Where the recognition model has got to, stated in the overlay itself.
+    ///
+    /// Until this was here the window said nothing while the model loaded, the
+    /// button was pressable, and the user started talking into a session that
+    /// could not transcribe: the opening turn came back empty or half — measured
+    /// once at 75 characters out of 144. In an interview that is the first
+    /// question, gone.
+    ///
+    /// It disappears in exactly one case — model ready *and* the session already
+    /// listening — because from then on the green dot and the «Стоп» button say
+    /// the same thing, and the overlay has to stay small mid-call.
+    ///
+    /// This is the only place readiness is ever reported. GhostMeet posts no
+    /// system notifications at all, not even the cheerful "ready now" kind: a
+    /// banner is drawn on top of everything the user is sharing and hands the
+    /// app over (ADR-0004). Good news is no exception to that rule.
+    @ViewBuilder
+    private var recognitionNotice: some View {
+        if let reason = recognition.phase.listeningBlockedReason {
+            VStack(alignment: .leading, spacing: 6) {
+                Label {
+                    Text(reason)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: recognitionIcon)
+                }
+                .font(.system(size: 11))
+
+                if case .downloading(let fraction) = recognition.phase {
+                    ProgressView(value: fraction)
+                        .controlSize(.small)
+                } else if case .loading = recognition.phase {
+                    // Loading reports no progress, so an indeterminate bar is
+                    // the honest shape: it says "working", not "almost there".
+                    ProgressView()
+                        .progressViewStyle(.linear)
+                        .controlSize(.small)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(recognitionBackground)
+        } else if !session.isListening {
+            Label("Модель готова — можно слушать", systemImage: "checkmark.circle.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(.green)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+        }
+    }
+
+    private var recognitionIcon: String {
+        if case .failed = recognition.phase { return "exclamationmark.triangle.fill" }
+        return "arrow.down.circle"
+    }
+
+    private var recognitionBackground: Color {
+        if case .failed = recognition.phase { return Color.orange.opacity(0.15) }
+        return Color.yellow.opacity(0.12)
     }
 
     // MARK: - Failure notice
@@ -202,9 +297,22 @@ struct ContentView: View {
     // A session with no sources: the preview shows the empty transcript and the
     // controls, without asking the previewing machine for its microphone.
     let session = SessionController(engine: SessionEngine(), requestMicrophoneAccess: { false })
+    // A throwaway settings suite, so previewing never rewrites the user's own
+    // model choice. Nothing calls `prepare()`, so no gigabytes move either.
+    let recognition = SpeechModelStatus(
+        store: SettingsStore(
+            defaults: UserDefaults(suiteName: "GhostMeetOverlayPreview") ?? .standard,
+            secrets: InMemorySecretStore()
+        )
+    )
     ContentView(
-        controller: OverlayWindowController(session: session, openSettings: {}),
+        controller: OverlayWindowController(
+            session: session,
+            recognition: recognition,
+            openSettings: {}
+        ),
         session: session,
+        recognition: recognition,
         openSettings: {}
     )
     .frame(width: 420, height: 520)

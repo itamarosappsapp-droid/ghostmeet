@@ -51,6 +51,7 @@ final class SettingsStore {
         static let turnSegmentation = "settings.turnSegmentation"
         static let speechModel = "settings.speechModel"
         static let themSourceApplication = "settings.themSourceApplication"
+        static let themCaptureBackend = "settings.themCaptureBackend"
         static let providerSelection = "settings.providerSelection"
     }
 
@@ -91,6 +92,32 @@ final class SettingsStore {
             }
         }
     }
+
+    /// How the `Them` channel is captured.
+    ///
+    /// ScreenCaptureKit by default: on the same recording it delivers a signal
+    /// 1.5–2.5 times louder than the process tap, and loudness is what
+    /// recognition quality hangs on. The tap remains one switch away for a
+    /// machine where Screen Recording is not on offer.
+    ///
+    /// Persisted as a bare string rather than as encoded JSON, so that the
+    /// choice can be made from outside the app while the two backends are being
+    /// compared — `defaults write … settings.themCaptureBackend` — and so that a
+    /// value written by a future version simply falls back to the default
+    /// instead of leaving the channel with no backend at all.
+    var themCaptureBackend: ThemCaptureBackend {
+        didSet { defaults.set(themCaptureBackend.rawValue, forKey: DefaultsKey.themCaptureBackend) }
+    }
+
+    /// Whether the microphone keeps its echo cancellation on.
+    ///
+    /// Always true. It was briefly conditional, on the belief that voice
+    /// processing silenced the process tap; the silence turned out to be a
+    /// memory bug of ours, and the defence against channel leak is unconditional
+    /// again — see the cancelled ADR-0005. Kept as a property because the
+    /// composition root already reads it, and because a future backend may yet
+    /// have a real reason to ask.
+    var allowsVoiceProcessing: Bool { true }
 
     /// Which model answers, plus the overrides the user typed over the preset.
     ///
@@ -190,6 +217,8 @@ final class SettingsStore {
         self.speechModel = Self.decode(WhisperModel.self, from: defaults, key: DefaultsKey.speechModel)
             ?? .default
         self.themSourceApplicationID = defaults.string(forKey: DefaultsKey.themSourceApplication)
+        self.themCaptureBackend = defaults.string(forKey: DefaultsKey.themCaptureBackend)
+            .flatMap(ThemCaptureBackend.init(rawValue:)) ?? .default
         // A selection naming a provider that has since been removed falls back
         // to the default rather than leaving the app pointed at nothing.
         let stored = Self.decode(ProviderSelection.self, from: defaults, key: DefaultsKey.providerSelection)

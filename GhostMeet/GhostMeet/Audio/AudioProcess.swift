@@ -180,7 +180,74 @@ extension SourceApplication {
         processes: [AudioProcess],
         applications: [RunningApplication]
     ) -> [SourceApplication] {
-        matching(processes: processes, applications: applications)
+        inOfferOrder(matching(processes: processes, applications: applications))
+    }
+
+    /// The list the picker shows while **ScreenCaptureKit** is the backend.
+    ///
+    /// A different list, not a filtered one. `SCShareableContent` knows every
+    /// application that owns a window and knows nothing of a command-line
+    /// player; Core Audio knows the exact opposite. Keeping the tap's list under
+    /// this backend would let the user pick something `SCStream` cannot see, and
+    /// the channel would then go quiet with nothing on screen to explain why.
+    ///
+    /// `audioProcesses` is still read from Core Audio, and only to answer «is it
+    /// making noise right now»: that is a fact about the machine rather than
+    /// about the backend, and the «звучит» marker is the one hint that tells the
+    /// user which of five browsers is carrying the call.
+    static func offered(
+        shareable: [ShareableApplication],
+        applications: [RunningApplication],
+        audioProcesses: [AudioProcess] = [],
+        excluding excludedProcess: pid_t = ProcessInfo.processInfo.processIdentifier
+    ) -> [SourceApplication] {
+        let audible = Set(
+            matching(processes: audioProcesses, applications: applications)
+                .filter(\.isPlayingAudio)
+                .map(\.id)
+        )
+
+        var byIdentity: [String: SourceApplication] = [:]
+        var order: [String] = []
+
+        for entry in shareable where entry.processIdentifier != excludedProcess {
+            let owner = applications.first { $0.owns(entry) }
+            let identity = owner?.identity ?? entry.fallbackIdentity
+            // An entry ScreenCaptureKit offers owns a window by definition, so
+            // «not a real application» can only come from the running-application
+            // list saying so — the Dock, Control Centre, our own overlay.
+            let isUserFacing = owner?.isUserFacing ?? true
+
+            if let existing = byIdentity[identity] {
+                byIdentity[identity] = SourceApplication(
+                    id: identity,
+                    name: existing.name,
+                    processObjectIDs: existing.processObjectIDs,
+                    isPlayingAudio: existing.isPlayingAudio,
+                    isUserFacing: existing.isUserFacing || isUserFacing
+                )
+            } else {
+                order.append(identity)
+                byIdentity[identity] = SourceApplication(
+                    id: identity,
+                    name: owner?.displayName ?? entry.displayName,
+                    // Empty on purpose: `SCStream` is pointed at PIDs, never at
+                    // Core Audio objects, and filling these in would be a claim
+                    // the capture side would afterwards have to work around.
+                    processObjectIDs: [],
+                    isPlayingAudio: audible.contains(identity),
+                    isUserFacing: isUserFacing
+                )
+            }
+        }
+
+        return inOfferOrder(order.compactMap { byIdentity[$0] })
+    }
+
+    /// Whatever is making sound first, then by name. Shared by both backends so
+    /// that switching one for the other does not reshuffle the picker.
+    private static func inOfferOrder(_ applications: [SourceApplication]) -> [SourceApplication] {
+        applications
             .filter { $0.isUserFacing || $0.isPlayingAudio }
             .sorted { left, right in
                 if left.isPlayingAudio != right.isPlayingAudio { return left.isPlayingAudio }
@@ -192,18 +259,44 @@ extension SourceApplication {
 extension RunningApplication {
 
     /// Whether this application is the one behind the given audio process.
-    ///
-    /// Kept as one predicate rather than a chain of passes because the rules do
-    /// not conflict: a helper matches its own application by all three at once,
-    /// and an unrelated process by none.
     func owns(_ process: AudioProcess) -> Bool {
-        if process.processIdentifier == processIdentifier { return true }
-        if let mine = bundleIdentifier, let theirs = process.bundleIdentifier {
+        owns(
+            processIdentifier: process.processIdentifier,
+            bundleIdentifier: process.bundleIdentifier,
+            executableURL: process.executableURL
+        )
+    }
+
+    /// Whether this application is the one behind the application
+    /// ScreenCaptureKit is offering.
+    ///
+    /// Same rule, other list: `SCShareableContent` reports helpers as separate
+    /// applications too, and folding them into the browser here is what keeps
+    /// the picker showing one Chrome under either backend.
+    func owns(_ application: ShareableApplication) -> Bool {
+        owns(
+            processIdentifier: application.processIdentifier,
+            bundleIdentifier: application.bundleIdentifier,
+            executableURL: application.executableURL
+        )
+    }
+
+    /// The rule itself, over the three fields both capture backends describe a
+    /// process with. Kept as one predicate rather than a chain of passes because
+    /// the rules do not conflict: a helper matches its own application by all
+    /// three at once, and an unrelated process by none.
+    private func owns(
+        processIdentifier pid: pid_t,
+        bundleIdentifier processBundleID: String?,
+        executableURL: URL?
+    ) -> Bool {
+        if pid == processIdentifier { return true }
+        if let mine = bundleIdentifier, let theirs = processBundleID {
             // `com.google.Chrome` owns `com.google.Chrome.helper`, and the dot
             // is what keeps it from also owning `com.google.ChromeCanary`.
             if theirs == mine || theirs.hasPrefix(mine + ".") { return true }
         }
-        if let bundleURL, let executableURL = process.executableURL,
+        if let bundleURL, let executableURL,
            executableURL.path.hasPrefix(bundleURL.path + "/") {
             return true
         }

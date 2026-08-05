@@ -42,6 +42,10 @@ final class SessionEngine {
     }
 
     private let clock: SessionClock
+
+    /// Temporary probe for the "hears nothing" investigation — see
+    /// `CaptureDiagnostics`. Remove together with that file.
+    @ObservationIgnored private let diagnostics = CaptureDiagnostics()
     private let recognizer: SpeechRecognizer
     private let sources: [AudioSource]
     /// The model behind the suggestions. Optional because the app has to be
@@ -104,9 +108,11 @@ final class SessionEngine {
         } catch {
             sources.forEach { $0.stop() }
             lastError = error.localizedDescription
+            diagnostics.captureFailed(error)
             throw error
         }
         isListening = true
+        diagnostics.captureStarted(sources.map { String(describing: type(of: $0)) })
         startPauseWatchdog()
     }
 
@@ -128,7 +134,11 @@ final class SessionEngine {
     /// it, and never from what was said.
     func ingest(_ frame: AudioFrame) {
         guard let segmenter = segmenters[frame.channel] else { return }
-        if let captured = segmenter.accept(frame, at: clock.now) { append(captured) }
+        diagnostics.sawFrame(frame, gate: config.silenceGateRMS)
+        if let captured = segmenter.accept(frame, at: clock.now) {
+            diagnostics.closedTurn(captured)
+            append(captured)
+        }
     }
 
     /// Lets time pass without new audio: a turn still closes on its pause or on
@@ -179,7 +189,13 @@ final class SessionEngine {
     private func recognize(turn id: Turn.ID, on channel: Channel, audio: SpeechAudio) {
         let recognizer = recognizer
         let task = Task { [weak self] in
-            let text = (try? await recognizer.transcribe(audio)) ?? ""
+            var text = ""
+            do {
+                text = try await recognizer.transcribe(audio)
+                self?.diagnostics.recognised(channel: channel, text: text)
+            } catch {
+                self?.diagnostics.recognitionFailed(channel: channel, error: error)
+            }
             guard !Task.isCancelled else { return }
             // A failed pass leaves the turn in place with no text: losing a turn
             // would be worse than showing one without words.

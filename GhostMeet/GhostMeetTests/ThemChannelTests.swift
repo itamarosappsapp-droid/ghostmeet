@@ -335,7 +335,9 @@ struct SourceApplicationCatalogTests {
             processes: [Chrome.mainProcess(), Chrome.helper(objectID: 152, pid: 14881)],
             applications: [Chrome.application()]
         )
-        let catalog = SourceApplicationCatalog(lister: lister)
+        // Перечень Core Audio — это список именно тапа: под ScreenCaptureKit
+        // каталог строит другой список (см. `BackendAwareCatalogTests`).
+        let catalog = SourceApplicationCatalog(backend: .processTap, lister: lister)
 
         catalog.refresh()
         #expect(catalog.applications.map(\.name) == ["Google Chrome"])
@@ -351,7 +353,7 @@ struct SourceApplicationCatalogTests {
             processes: [Chrome.mainProcess()],
             applications: [Chrome.application()]
         )
-        let catalog = SourceApplicationCatalog(lister: lister)
+        let catalog = SourceApplicationCatalog(backend: .processTap, lister: lister)
         catalog.refresh()
         #expect(catalog.application(withID: Chrome.bundleID) != nil)
 

@@ -7,13 +7,15 @@
 // realtime capture thread by design, and the SDK does not say so in types yet.
 @preconcurrency import AVFoundation
 import Foundation
+import os
 
 /// Microphone capture: the source of the `You` channel.
 ///
-/// Voice processing (VPIO) is switched on for the input node before the engine
-/// starts. It is the only defence against channel leak — `Them` coming out of
-/// the speakers and being caught by the microphone — and it has to work with the
-/// headphones off, which is the normal case for the user.
+/// Voice processing (VPIO) is the defence against channel leak — `Them` coming
+/// out of the speakers and being caught by the microphone. It is **not** always
+/// on, because it cannot be: enabling it silences the process tap that feeds the
+/// `Them` channel (see ADR-0005). Whoever builds this service decides, and the
+/// rule is in `SessionController.dualChannel`.
 nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
     enum CaptureError: LocalizedError {
         case voiceProcessingUnavailable(Error)
@@ -39,11 +41,41 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
 
     private let engine = AVAudioEngine()
     private let targetFormat: AVAudioFormat
-    private var converter: AVAudioConverter?
+
+    /// Temporary probe — remove with `CaptureDiagnostics`.
+    private let level = ChannelLevelProbe(label: "you-mic")
+
+    /// Whether echo cancellation is switched on for this capture.
+    ///
+    /// Off while the `Them` channel is tapping an application: VPIO takes over
+    /// the machine's audio path and hands the tap pure silence. With it off the
+    /// user needs headphones, or their own channel collects the other side's
+    /// voice (ADR-0005).
+    private let voiceProcessingEnabled: Bool
+
+    /// Holds the converter for whatever format the tap turns out to deliver.
+    ///
+    /// Built on the first buffer instead of up front: the format a voice-processed
+    /// input node reports and the one it delivers are not always the same, and the
+    /// buffer is the only source of truth. Rebuilt if the format ever changes
+    /// under us — switching the input device mid-call does that.
+    private final class ConverterBox: @unchecked Sendable {
+        private var converter: AVAudioConverter?
+        private var sourceFormat: AVAudioFormat?
+
+        func converter(for source: AVAudioFormat, to target: AVAudioFormat) -> AVAudioConverter? {
+            if let converter, sourceFormat == source { return converter }
+            guard let made = AVAudioConverter(from: source, to: target) else { return nil }
+            converter = made
+            sourceFormat = source
+            return made
+        }
+    }
 
     /// - Parameter sampleRate: rate the frames are delivered at. 16 kHz mono is
     ///   what speech recognition wants, and it keeps the buffers small.
-    init(sampleRate: Double = 16_000) {
+    init(sampleRate: Double = 16_000, voiceProcessing: Bool = true) {
+        voiceProcessingEnabled = voiceProcessing
         targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: sampleRate,
@@ -71,30 +103,58 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
         guard !isRunning else { return }
 
         let input = engine.inputNode
-        do {
-            // Enabling voice processing changes the node's format, so it must
-            // happen before the format is read and before the tap is installed.
-            try input.setVoiceProcessingEnabled(true)
-        } catch {
-            throw CaptureError.voiceProcessingUnavailable(error)
+        if voiceProcessingEnabled {
+            do {
+                // Enabling voice processing changes the node's format, so it must
+                // happen before the format is read and before the tap is installed.
+                try input.setVoiceProcessingEnabled(true)
+            } catch {
+                throw CaptureError.voiceProcessingUnavailable(error)
+            }
+
+            // Voice processing ducks every other sound on the machine while it
+            // captures. That is wrong here twice over: it quietens the call the
+            // user is listening to, and it quietens the very audio the `Them`
+            // channel is trying to recognise. Ducking is turned down to its
+            // minimum; echo cancellation itself is unaffected.
+            input.voiceProcessingOtherAudioDuckingConfiguration =
+                AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
+                    enableAdvancedDucking: false,
+                    duckingLevel: .min
+                )
         }
 
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
             throw CaptureError.inputFormatUnavailable
         }
-        guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
-            throw CaptureError.converterUnavailable
-        }
-        self.converter = converter
 
+        // Temporary probe: which device the engine actually reads from, and in
+        // what format. A silent capture with a lit microphone indicator looks the
+        // same whether the wrong device is selected or the right one is muted.
+        Self.logInputDevice(of: input, format: inputFormat, voiceProcessing: voiceProcessingEnabled)
+
+        // The tap is installed with `nil` rather than with the format the node
+        // reports. With voice processing on, the reported format and the one the
+        // node actually delivers can differ, and a tap pinned to the wrong one
+        // yields buffers of digital silence — the microphone indicator lights up
+        // and every sample is zero. `nil` means "whatever this node really
+        // produces", which is also why the converter below is built from the
+        // buffer rather than from the reported format.
         let targetFormat = targetFormat
-        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { buffer, _ in
+        let converterBox = ConverterBox()
+        let level = level
+        input.installTap(onBus: 0, bufferSize: 4096, format: nil) { buffer, _ in
+            guard let mono = Self.firstChannel(of: buffer) else { return }
+            guard let converter = converterBox.converter(for: mono.format, to: targetFormat) else {
+                return
+            }
             guard let frame = Self.makeFrame(
-                from: buffer,
+                from: mono,
                 converter: converter,
                 targetFormat: targetFormat
             ) else { return }
+            level.saw(samples: frame.samples, sampleRate: frame.sampleRate)
             onFrame(frame)
         }
 
@@ -103,7 +163,6 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
-            self.converter = nil
             throw error
         }
         isRunning = true
@@ -113,11 +172,82 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
         guard isRunning else { return }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        converter = nil
         isRunning = false
     }
 
-    /// Downmixes and resamples one captured buffer into a `You` frame.
+    /// Temporary probe for the "microphone delivers silence" investigation.
+    /// Remove with `CaptureDiagnostics`.
+    private static func logInputDevice(
+        of input: AVAudioInputNode,
+        format: AVAudioFormat,
+        voiceProcessing: Bool
+    ) {
+        let log = Logger(subsystem: "Mixxy.GhostMeet", category: "capture")
+
+        var deviceID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID
+        )
+
+        var name: Unmanaged<CFString>?
+        var nameSize = UInt32(MemoryLayout<CFString?>.size)
+        var nameAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectGetPropertyData(deviceID, &nameAddress, 0, nil, &nameSize, &name)
+        let deviceName = name?.takeRetainedValue() as String? ?? "неизвестно"
+
+        log.info("""
+            ВХОД: устройство=\(deviceName, privacy: .public) id=\(deviceID, privacy: .public) \
+            формат=\(format.sampleRate, privacy: .public)Гц/\(format.channelCount, privacy: .public)кан \
+            VPIO=\(voiceProcessing ? "вкл" : "выкл", privacy: .public)
+            """)
+    }
+
+    /// Takes channel 0 of a captured buffer as a mono buffer at the same rate.
+    ///
+    /// This exists because of a trap that costs a whole debugging session if you
+    /// meet it blind: with voice processing on, the built-in microphone presents
+    /// **seven** channels — the processed mono stream plus the raw elements of
+    /// the mic array. Handing that straight to `AVAudioConverter` and asking for
+    /// mono makes it return **silence**: it has no channel map for folding seven
+    /// into one, and it reports no error while doing so. The indicator lights up,
+    /// buffers keep arriving, and every sample is zero.
+    ///
+    /// Channel 0 is the stream voice processing has already cleaned, which is
+    /// exactly the one the `You` channel wants.
+    /// Internal rather than private so the regression test can reach it.
+    static func firstChannel(of buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        let format = buffer.format
+        guard buffer.frameLength > 0, !format.isInterleaved, let source = buffer.floatChannelData else {
+            return nil
+        }
+        guard format.channelCount > 1 else { return buffer }
+
+        guard let monoFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: format.sampleRate,
+            channels: 1,
+            interleaved: false
+        ), let mono = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: buffer.frameLength),
+           let destination = mono.floatChannelData else {
+            return nil
+        }
+
+        mono.frameLength = buffer.frameLength
+        destination[0].update(from: source[0], count: Int(buffer.frameLength))
+        return mono
+    }
+
+    /// Resamples one captured buffer into a `You` frame.
     private static func makeFrame(
         from buffer: AVAudioPCMBuffer,
         converter: AVAudioConverter,

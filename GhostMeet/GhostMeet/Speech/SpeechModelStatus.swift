@@ -5,6 +5,7 @@
 
 import Foundation
 import Observation
+import os
 
 /// What the interface knows and can do about the recognition model.
 ///
@@ -43,6 +44,18 @@ final class SpeechModelStatus {
     let recognizer: WhisperSpeechRecognizer
 
     @ObservationIgnored private let store: SettingsStore
+
+    /// Every phase change goes to the system log as well as to the window.
+    ///
+    /// Preparation takes seconds even for a model already on disk, and the
+    /// overlay is excluded from screen capture — so when the app misbehaves on
+    /// someone else's machine, this log is the only way to tell "the model was
+    /// still loading" apart from "recognition is broken".
+    @ObservationIgnored private static let log = Logger(
+        subsystem: "Mixxy.GhostMeet",
+        category: "speech"
+    )
+
     @ObservationIgnored private var observation: Task<Void, Never>?
 
     init(
@@ -55,6 +68,7 @@ final class SpeechModelStatus {
         let recognizer = self.recognizer
         observation = Task { [weak self] in
             for await phase in await recognizer.phaseUpdates() {
+                Self.log.info("РАСПОЗНАВАНИЕ: \(phase.summary, privacy: .public)")
                 self?.phase = phase
             }
         }

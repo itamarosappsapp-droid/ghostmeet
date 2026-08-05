@@ -25,14 +25,15 @@ struct SettingsView: View {
     /// reaches the keychain so the secret does not linger in view state.
     @State private var providerKeyDraft: String = ""
 
-    /// Which applications can be tapped right now. Owned by the screen rather
-    /// than passed in: it is a live reading of the system, not a setting, and
-    /// what capture actually shares with it is only the stored id.
+    /// Which applications the selected backend can capture right now. Owned by
+    /// the screen rather than passed in: it is a live reading of the system, not
+    /// a setting, and what capture actually shares with it is only the stored id.
     @State private var catalog = SourceApplicationCatalog()
 
     var body: some View {
         Form {
             profileSection
+            captureBackendSection
             sourceApplicationSection
             recognitionSection
             providerSection
@@ -41,7 +42,70 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(minWidth: 480, minHeight: 620)
-        .onAppear { catalog.startTracking() }
+        .onAppear {
+            catalog.backend = store.themCaptureBackend
+            catalog.startTracking()
+        }
+        // The two lists are not the same list, so the picker below has to be
+        // rebuilt for the backend the user just chose — otherwise it keeps
+        // offering applications this backend cannot see, and the channel goes
+        // silent with nothing on screen to explain it.
+        .onChange(of: store.themCaptureBackend) { catalog.backend = store.themCaptureBackend }
+    }
+
+    // MARK: - Capture backend
+
+    /// How the `Them` channel is captured — the choice that decides how well it
+    /// is recognised.
+    ///
+    /// Both options are described by what they do and what they cost, in
+    /// measurements rather than in adjectives: neither is better everywhere, the
+    /// difference is a permission on one side and signal level on the other, and
+    /// the user is the only one who knows what this machine allows.
+    private var captureBackendSection: some View {
+        Section("Захват канала Them") {
+            Picker("Бэкенд", selection: $store.themCaptureBackend) {
+                ForEach(ThemCaptureBackend.allCases, id: \.self) { backend in
+                    Text(backend.displayName).tag(backend)
+                }
+            }
+
+            ForEach(ThemCaptureBackend.allCases, id: \.self) { backend in
+                Label(backend.summary, systemImage: iconName(for: backend))
+                    .font(.footnote)
+                    .foregroundStyle(backend == store.themCaptureBackend ? .primary : .secondary)
+            }
+
+            screenRecordingNotice
+
+            Text("Смена бэкенда применяется сразу — перезапуск не нужен. Список приложений ниже перестраивается вместе с ней: ScreenCaptureKit видит только приложения с окнами, тап — любой процесс со звуком.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func iconName(for backend: ThemCaptureBackend) -> String {
+        switch backend {
+        case .screenCaptureKit: "rectangle.on.rectangle"
+        case .processTap: "waveform"
+        }
+    }
+
+    /// Why the picker below is empty, when it is.
+    ///
+    /// ScreenCaptureKit is the default backend, so a machine that has never
+    /// granted Screen Recording runs into exactly this on the very first launch:
+    /// capture starts, nothing arrives, and without this line there is nothing
+    /// anywhere saying what to do. It is shown here and inside the overlay
+    /// window, and never as a system notification — a banner would be drawn on
+    /// top of the screen the user is sharing (ADR-0004).
+    @ViewBuilder
+    private var screenRecordingNotice: some View {
+        if let reason = catalog.unavailableReason {
+            Label(reason, systemImage: "exclamationmark.triangle")
+                .font(.footnote)
+                .foregroundStyle(.red)
+        }
     }
 
     // MARK: - Profile
@@ -84,6 +148,12 @@ struct SettingsView: View {
     /// finest granularity any capture API on macOS offers. The footnotes say so
     /// outright: promising a single tab here would be a promise the tap cannot
     /// keep.
+    ///
+    /// The list itself belongs to the selected backend and is rebuilt with it.
+    /// Core Audio knows every process that opened an output device;
+    /// ScreenCaptureKit knows every application that owns a window. Neither list
+    /// contains the other, and showing the wrong one would let the user pick
+    /// something the running backend cannot see.
     private var sourceApplicationSection: some View {
         Section("Приложение-источник") {
             Picker("Слушать", selection: sourceSelection) {
@@ -96,7 +166,7 @@ struct SettingsView: View {
                 // its application is closed — otherwise reopening the settings
                 // before the browser is up would silently drop the choice.
                 if let missing = missingSelection {
-                    Text("\(missing) · не запущено").tag(String?.some(missing))
+                    Text("\(missing) · \(missingSelectionNote)").tag(String?.some(missing))
                 }
             }
 
@@ -107,6 +177,10 @@ struct SettingsView: View {
                 Spacer()
                 Button("Обновить список") { catalog.refresh() }
             }
+
+            Text(listSourceNote)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
 
             Text("Звук берётся с приложения целиком: отделить вкладку со звонком от остальных вкладок браузера нельзя, поэтому всё, что играет в том же приложении, попадёт в канал Them.")
                 .font(.footnote)
@@ -120,6 +194,25 @@ struct SettingsView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    /// Where the list above comes from — the one sentence that keeps «моего
+    /// приложения здесь нет» from looking like a bug.
+    private var listSourceNote: String {
+        switch store.themCaptureBackend {
+        case .screenCaptureKit:
+            "Список показывает то, что видит ScreenCaptureKit: приложения с окнами. Процесса без окна — плеера из терминала, например — здесь не будет; для него переключитесь на Core Audio Process Tap."
+        case .processTap:
+            "Список показывает то, что видит Core Audio: любой процесс, открывший звуковое устройство, даже без окна."
+        }
+    }
+
+    /// Why the stored choice is not among the entries offered right now. Under
+    /// ScreenCaptureKit that is one reason more than «не запущено».
+    private var missingSelectionNote: String {
+        store.themCaptureBackend == .screenCaptureKit
+            ? "нет в списке ScreenCaptureKit"
+            : "не запущено"
     }
 
     private var sourceSelection: Binding<String?> {
@@ -137,11 +230,18 @@ struct SettingsView: View {
     }
 
     private var selectionSummary: String {
+        // A missing permission outranks everything else this line could say: the
+        // list is empty for a reason that has nothing to do with the choice.
+        if catalog.unavailableReason != nil {
+            return "Список пуст — см. предупреждение выше."
+        }
         guard let id = store.themSourceApplicationID else {
             return "Канал Them молчит, пока источник не выбран."
         }
         guard let application = catalog.application(withID: id) else {
-            return "Приложение не запущено — захват включится сам, когда оно вернётся."
+            return store.themCaptureBackend == .screenCaptureKit
+                ? "ScreenCaptureKit сейчас не показывает это приложение — захват включится сам, когда оно откроет окно."
+                : "Приложение не запущено — захват включится сам, когда оно вернётся."
         }
         return application.isPlayingAudio
             ? "Приложение сейчас выдаёт звук."

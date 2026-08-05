@@ -38,13 +38,37 @@ nonisolated enum SpeechModelPhase: Equatable, Sendable {
     /// Whether turns handed over right now would get text.
     var isReady: Bool { self == .ready }
 
+    /// Why listening cannot start yet, in words meant for the overlay.
+    ///
+    /// `nil` exactly when listening may start, so this doubles as the gate the
+    /// window reads: the button is enabled iff this is `nil`.
+    ///
+    /// Deliberately a different text from `summary`. The settings screen states
+    /// a fact about the model; the overlay has to answer the question the user
+    /// is actually asking there — "why can't I press this?" — because a
+    /// disabled button with no explanation reads as a broken app.
+    var listeningBlockedReason: String? {
+        switch self {
+        case .idle:
+            return "Модель распознавания ещё не готова — подготовка вот-вот начнётся."
+        case .downloading(let fraction):
+            return "Скачивание модели — \(Self.percent(fraction))%. Прослушивание включится, когда она будет готова."
+        case .loading:
+            return "Модель загружается в память — несколько секунд."
+        case .ready:
+            return nil
+        case .failed(let reason):
+            return "Модель не загрузилась: \(reason). Прослушивание недоступно — загрузите модель заново в настройках."
+        }
+    }
+
     /// One line for the settings screen, in the user's language.
     var summary: String {
         switch self {
         case .idle:
             return "Модель ещё не загружена"
         case .downloading(let fraction):
-            return "Скачивание модели — \(Int((fraction * 100).rounded()))%"
+            return "Скачивание модели — \(Self.percent(fraction))%"
         case .loading:
             return "Подготовка модели"
         case .ready:
@@ -52,5 +76,9 @@ nonisolated enum SpeechModelPhase: Equatable, Sendable {
         case .failed(let reason):
             return "Модель не загрузилась: \(reason)"
         }
+    }
+
+    private static func percent(_ fraction: Double) -> Int {
+        Int((min(max(fraction, 0), 1) * 100).rounded())
     }
 }

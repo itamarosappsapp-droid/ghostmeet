@@ -25,6 +25,11 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
     /// each other.
     private let session: SessionController
 
+    /// How far the recognition model has got. Passed straight through to the
+    /// content view: the window geometry has no opinion about it, but the
+    /// overlay is the only place the user can see it mid-call.
+    private let recognition: SpeechModelStatus
+
     /// Opening the settings window is somebody else's job — the overlay only
     /// has the button. In accessory mode there is no menu bar to put it in.
     private let openSettings: () -> Void
@@ -35,11 +40,13 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
 
     init(
         session: SessionController,
+        recognition: SpeechModelStatus,
         openSettings: @escaping () -> Void,
         configuration: OverlayWindowConfiguration = .overlay,
         stateStore: WindowStateStore = WindowStateStore()
     ) {
         self.session = session
+        self.recognition = recognition
         self.openSettings = openSettings
         self.configuration = configuration
         self.stateStore = stateStore
@@ -92,7 +99,12 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
         panel.delegate = self
 
         let hostingView = NSHostingView(
-            rootView: ContentView(controller: self, session: session, openSettings: openSettings)
+            rootView: ContentView(
+                controller: self,
+                session: session,
+                recognition: recognition,
+                openSettings: openSettings
+            )
         )
         // Empty sizing options: otherwise the hosting view imposes the SwiftUI
         // content's ideal size on the window and overrides the restored frame.

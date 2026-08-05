@@ -53,9 +53,14 @@ final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
     private lazy var recognition = SpeechModelStatus(store: settings)
 
     /// The one session: microphone in, transcript out.
+    ///
+    /// It is handed the model's phase, not just the recogniser: listening that
+    /// starts before the model is loaded loses the first thing said, because a
+    /// turn closed too early is refused outright rather than queued.
     private lazy var session = SessionController.dualChannel(
         settings: settings,
-        recognizer: recognition.recognizer
+        recognizer: recognition.recognizer,
+        isRecognitionReady: { [weak self] in self?.recognition.phase.isReady ?? false }
     )
 
     private lazy var settingsWindowController = SettingsWindowController(
@@ -65,6 +70,7 @@ final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
 
     private lazy var overlayWindowController = OverlayWindowController(
         session: session,
+        recognition: recognition,
         openSettings: { [weak self] in self?.settingsWindowController.show() },
         stateStore: WindowStateStore(defaults: defaults)
     )
@@ -87,9 +93,38 @@ final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
         // takes effect on the next suggestion, without relaunching the app.
         session.followProviderSelection(of: settings)
 
+        // Load the recognition model now rather than on the first turn.
+        //
+        // Preparation is lazy by default, and a turn closed before the model is
+        // ready is rejected outright rather than queued — otherwise a pile of
+        // stale suggestions would land once loading finished. Left alone, that
+        // means the first thing said in every session is lost, which in an
+        // interview is the opening question. The model is already on disk by
+        // then, so this only pays for loading it into memory.
+        recognition.prepare()
+
+        // How far preparation has got is reported in the overlay and nowhere
+        // else. GhostMeet posts no system notifications at all — macOS draws
+        // banners on top of everything, including the window the user is
+        // sharing, and one banner is all it takes to give the app away
+        // (ADR-0004). That holds for good news as much as for failures.
+
         // Listening is not started here on purpose: the microphone prompt would
         // come up before the user has asked for anything, and the first thing
         // they see would be a permission dialog rather than the overlay.
+        //
+        // Exception, temporary: the overlay is a non-activating panel excluded
+        // from screen capture, so during the "hears nothing" investigation there
+        // is no way to press the button from outside. Remove with
+        // `CaptureDiagnostics`.
+        //
+        // Even that lever waits for the model: starting blind is exactly the bug
+        // this ticket is about, and an autostart that loses the first turn would
+        // reproduce it in every diagnostic run.
+        if ProcessInfo.processInfo.environment["GHOSTMEET_AUTOSTART"] == "1" {
+            session.startWhenRecognitionIsReady()
+        }
+
         overlayWindowController.show()
     }
 

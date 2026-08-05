@@ -8,6 +8,7 @@
 @preconcurrency import AVFoundation
 import CoreAudio
 import Foundation
+import os
 import Observation
 
 /// What the `Them` capture is doing, in words meant for the user.
@@ -44,15 +45,17 @@ nonisolated enum ThemCaptureStatus: Equatable, Sendable {
 /// process tap.
 ///
 /// `SessionEngine` sees this through `AudioSource` and learns nothing about taps
-/// or aggregate devices (ADR-0001); the tap is the default backend and
-/// ScreenCaptureKit lands in the same seam later.
+/// or aggregate devices (ADR-0001). No longer the default — ScreenCaptureKit is
+/// (ADR-0006), because it delivers a signal 1.5–2.5 times louder. This one stays
+/// as the second backend for what `SCStream` cannot reach at all: a process that
+/// makes sound and owns no window.
 ///
 /// The source application is held by a **stable id**, never by a process: a
 /// browser plays its sound from a helper process whose PID and Core Audio object
 /// change every time the browser is restarted. The service re-resolves that id
 /// whenever the process list moves, which is what turns a restart of the source
 /// application from a dead channel into a pause.
-nonisolated final class ProcessTapCaptureService: AudioSource, @unchecked Sendable {
+nonisolated final class ProcessTapCaptureService: ThemAudioSource, @unchecked Sendable {
 
     let channel: Channel = .them
 
@@ -72,6 +75,9 @@ nonisolated final class ProcessTapCaptureService: AudioSource, @unchecked Sendab
     private var converter: AVAudioConverter?
     private var lastKnownName: String?
     private var listener: AudioObjectPropertyListenerBlock?
+
+    /// Temporary probe — remove with `CaptureDiagnostics`.
+    private let level = ChannelLevelProbe(label: "them-tap")
 
     /// - Parameters:
     ///   - sourceApplicationID: stable id of the chosen application, or `nil`
@@ -187,9 +193,20 @@ nonisolated final class ProcessTapCaptureService: AudioSource, @unchecked Sendab
         let handler = onFrame
         lock.unlock()
 
+        // Temporary probe: which processes of the chosen application we ended up
+        // tapping. `afplay` works while Chrome does not, and the difference can
+        // only be in this list. Remove with `CaptureDiagnostics`.
+        Logger(subsystem: "Mixxy.GhostMeet", category: "capture").info("""
+            ИСТОЧНИК выбран=\(id, privacy: .public) \
+            имя=\(application.name, privacy: .public) \
+            объекты=\(application.processObjectIDs.map(String.init).joined(separator: ","), privacy: .public) \
+            звучит=\(application.isPlayingAudio, privacy: .public)
+            """)
+
         do {
             try tap.start(processObjectIDs: application.processObjectIDs) { [weak self] buffer in
                 guard let self, let handler, let frame = self.makeFrame(from: buffer) else { return }
+                self.level.saw(samples: frame.samples, sampleRate: frame.sampleRate)
                 handler(frame)
             }
             publish(.capturing(application: application.name))
@@ -306,24 +323,3 @@ nonisolated final class ProcessTapCaptureService: AudioSource, @unchecked Sendab
     }
 }
 
-@MainActor
-extension ProcessTapCaptureService {
-
-    /// Keeps the tapped application equal to what the settings screen shows.
-    ///
-    /// The same mechanism `SessionController` uses for the segmentation
-    /// thresholds: the store is observable, so re-reading it after every change
-    /// is the whole thing — no notification, no restart of the session, no Apply
-    /// button. Picking a browser mid-call re-points the tap on the spot.
-    func followSourceSelection(of settings: SettingsStore) {
-        withObservationTracking {
-            sourceApplicationID = settings.themSourceApplicationID
-        } onChange: { [weak self] in
-            // `onChange` fires *before* the new value is stored, so re-reading
-            // has to wait for the next turn of the main actor.
-            Task { @MainActor [weak self] in
-                self?.followSourceSelection(of: settings)
-            }
-        }
-    }
-}

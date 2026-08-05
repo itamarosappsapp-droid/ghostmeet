@@ -8,7 +8,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-A bare SwiftUI app skeleton exists (`GhostMeetApp.swift` + `ContentView.swift` — Xcode template, no GhostMeet logic yet). None of the spec is implemented: no audio capture, no STT, no LLM layer, no window/hotkey work. There is no test target yet.
+The MVP pipeline runs end to end: both channels are captured, turns are cut on pauses, speech is recognised locally, and a closed `Them` turn starts a suggestion on its own. **246 tests** across 34 suites (Swift Testing, target `GhostMeetTests`).
+
+Done: project skeleton and test target, microphone capture with VPIO, turn segmentation, WhisperKit recognition with model selection, the overlay window, the `Them` channel (both backends), settings with per-provider keys, the proactive `Assist` loop with a streaming Claude provider, and the full provider router (OpenAI-compatible family, Gemini, CLI tools).
+
+Not done: cancelling a stale suggestion (ticket 08), screenshot and OCR in requests (09), hotkeys and state indicators (10), the manual `Ask` / `Solve on screen` modes (11). Tickets live in `.scratch/interview-mvp/`.
+
+**Temporary debugging scaffolding is still in the tree** — `App/CaptureDiagnostics.swift`, level probes, and the `GHOSTMEET_AUTOSTART` / `GHOSTMEET_VPIO` / `GHOSTMEET_SCK_WHOLE_DISPLAY` environment flags. The autostart flag changes behaviour and must not survive into a release. Remove it all once the live-call check is done; keep `MicChannelExtractionTests`.
 
 ```
 GhostMeet/                      ← repo root
@@ -66,11 +72,22 @@ plutil -p ~/Library/Developer/Xcode/DerivedData/GhostMeet-*/Build/Products/Debug
 - **Give every concurrent build its own `-derivedDataPath`.** Parallel agents sharing the default DerivedData corrupt each other's builds.
 - `SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY` is on, so `CGRect` / `CGSize` need an explicit `import CoreGraphics` even where `Foundation` is already imported. A standalone `swiftc -typecheck` without the flag will not reproduce the error.
 
+### Silent audio failures
+
+Two independent bugs in this project produced *identical* symptoms — capture running, indicators lit, buffers arriving at the right rate, every sample zero, not one error code anywhere. Both came from the same root: **macOS reports one audio format and delivers another**, and the mismatch is never an error, only silence.
+
+- **Microphone.** With VPIO on, the built-in mic presents **seven** channels — processed mono plus the raw mic-array elements. `AVAudioConverter` has no channel map for folding seven into one, so it returns silence without complaining. Take channel 0 (the processed one) yourself; never ask a converter to downmix >2 channels.
+- **Process Tap.** The tap *reports* interleaved stereo and *delivers* two separate channel buffers. `AVAudioPCMBuffer(pcmFormat:bufferListNoCopy:)` returns nil on a layout mismatch — silently — so every frame vanishes while the IOProc runs perfectly. Derive the format from `AudioBufferList.mNumberBuffers`, not from what the tap claims.
+
+The lesson generalises: **in this codebase, never trust a reported audio format — measure what actually arrived.** When audio "doesn't work", the first move is to log frame counts, RMS and buffer layout; return codes will tell you nothing. `MicChannelExtractionTests` guards the first case.
+
+VPIO also **ducks all other system audio** while capturing, which both annoys the user and quietens the very audio `Them` is trying to recognise. Set `voiceProcessingOtherAudioDuckingConfiguration` to `.min`.
+
 ### Permissions and TCC
 
 Four usage strings are declared: microphone (You channel), audio capture (Them channel via Process Tap), screen capture (Solve on screen), speech recognition (Apple Speech fallback). Note that macOS shows **no purpose string** for the Screen Recording prompt — `NSScreenCaptureUsageDescription` is declared for completeness, but the user will never read it.
 
-The app is currently **ad-hoc signed** (`CODE_SIGN_IDENTITY = -`, no team). TCC grants are keyed to the signature, so the ad-hoc identity changes across rebuilds and macOS may re-prompt or silently drop previously granted mic/audio/screen permissions. If permissions start behaving erratically during audio work, this is the first thing to check — switching to a stable Apple Development identity (set `DEVELOPMENT_TEAM`) fixes it. Hardened Runtime is off; if it is ever enabled, microphone access will additionally require the `com.apple.security.device.audio-input` entitlement.
+The app is signed with a **stable Apple Development identity** (personal team). This matters more than it looks: TCC grants are keyed to the signature, and while the project was ad-hoc signed every rebuild produced a new identity — macOS then re-prompted, or worse, reported the microphone as authorised and handed the app pure silence. If permissions start behaving oddly, check the signature first. Hardened Runtime is off; if it is ever enabled, microphone access will additionally require the `com.apple.security.device.audio-input` entitlement.
 
 ## What GhostMeet is
 
@@ -95,7 +112,7 @@ These are the decisions that shape everything else; changing one has ripple effe
 
 **Two implementations per external seam.** Capture, STT and LLM each have two or more backends behind one protocol, selectable in settings — see [ADR-0001](docs/adr/0001-swappable-backends-behind-protocols.md). Branching must not leak upward: `Speech` doesn't know where the audio came from, `Intelligence` doesn't know what transcribed it. Backends are built **one at a time** through the seam, not in parallel.
 
-**Process Tap is the default, not the only way.** Core Audio Process Tap ships first and stays the default (no video pipeline, keeps working if Screen Recording is revoked); ScreenCaptureKit is the second backend and the automatic fallback. Note the spec's original justification is partly obsolete: both APIs are **app-level**, neither isolates a browser tab, and Screen Recording is needed anyway because every suggestion carries a screenshot.
+**ScreenCaptureKit is the default; Process Tap is the second backend.** The default was flipped on a measurement, not a preference: SCK delivers 1.5–2.5× more signal because voice-processing ducking hits the tap harder, and quiet audio is the product's main quality limit ([ADR-0006](docs/adr/0006-screencapturekit-default-for-them.md)). The spec's original case for the tap has mostly expired — both APIs are **app-level**, neither isolates a browser tab, and Screen Recording is needed anyway because every suggestion carries a screenshot. What survives is that the tap sees *any* process making sound, while SCK lists only windowed applications; that is why it stays.
 
 **Local-first privacy.** STT is on-device (see [ADR-0002](docs/adr/0002-stt-engine-choice.md) — **WhisperKit, not MLX**); the LLM layer must support fully local providers (Ollama, LM Studio, llama.cpp server, MLX-LM) alongside cloud ones. BYOK, no backend server of our own — API keys live in Keychain only. Nothing is written to disk unless the user turns it on.
 
