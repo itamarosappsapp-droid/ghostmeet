@@ -110,34 +110,10 @@ struct SettingsView: View {
 
     // MARK: - Profile
 
+    /// Profiles, their contents and the resume import — a section of its own
+    /// because it is now four controls and a sheet rather than three fields.
     private var profileSection: some View {
-        Section("Профиль") {
-            LabeledContent("Роль") {
-                TextField("Например: backend-разработчик", text: $store.profile.role)
-                    .textFieldStyle(.roundedBorder)
-            }
-            LabeledContent("Опыт") {
-                TextField(
-                    "Например: 6 лет, финтех и высоконагруженные сервисы",
-                    text: $store.profile.experience,
-                    axis: .vertical
-                )
-                .lineLimit(2...5)
-                .textFieldStyle(.roundedBorder)
-            }
-            LabeledContent("Стек") {
-                TextField(
-                    "Например: Go, PostgreSQL, Kubernetes",
-                    text: $store.profile.stack,
-                    axis: .vertical
-                )
-                .lineLimit(2...5)
-                .textFieldStyle(.roundedBorder)
-            }
-            Text("Профиль относится к вам, а не к звонку: очистка контекста разговора его не стирает.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
+        ProfileSectionView(store: store)
     }
 
     // MARK: - Source application

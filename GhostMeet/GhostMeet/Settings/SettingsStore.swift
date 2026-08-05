@@ -25,7 +25,8 @@ nonisolated enum SecretAccount {
     static let legacyLLMProviderKey = "llm.provider.api-key"
 }
 
-/// User-scoped settings: the profile and the turn-segmentation thresholds.
+/// User-scoped settings: the user's profiles and the turn-segmentation
+/// thresholds.
 ///
 /// Two invariants shape this type:
 ///
@@ -47,7 +48,10 @@ final class SettingsStore {
     static let shared = SettingsStore()
 
     private enum DefaultsKey {
-        static let profile = "settings.userProfile"
+        static let profileLibrary = "settings.profileLibrary"
+        /// The key of the build that kept exactly one profile. Read once, at
+        /// startup, and turned into a library — see `migratedLibrary(from:)`.
+        static let legacyProfile = "settings.userProfile"
         static let turnSegmentation = "settings.turnSegmentation"
         static let speechModel = "settings.speechModel"
         static let themSourceApplication = "settings.themSourceApplication"
@@ -58,10 +62,40 @@ final class SettingsStore {
 
     // MARK: - Persisted, user-scoped state
 
-    /// Standing facts about the user. Survives both app restarts and clearing
-    /// the conversation context.
+    /// Every profile the user keeps, and which one is in force. Survives both
+    /// app restarts and clearing the conversation context.
+    ///
+    /// The list is here rather than in session state for the same reason the
+    /// single profile always was: it belongs to the user. What is new is that
+    /// the *choice* between them is made per call — «сейчас я иду на интервью
+    /// тимлида» — and is therefore the one thing on this screen that also has
+    /// to be reachable from the overlay, in one click, without opening
+    /// settings.
+    private(set) var profileLibrary: ProfileLibrary {
+        didSet { persist(profileLibrary, forKey: DefaultsKey.profileLibrary) }
+    }
+
+    /// The profiles, in the order the user arranged them. Read-only: every
+    /// change goes through a method, so both library invariants hold.
+    var profiles: [UserProfile] { profileLibrary.profiles }
+
+    /// Which profile is in force. Assigning it is the one-click switch the
+    /// overlay makes before a call.
+    var selectedProfileID: UserProfile.ID {
+        get { profileLibrary.selectedID }
+        set { profileLibrary.select(newValue) }
+    }
+
+    /// Standing facts about the user — **the selected profile, and only it**.
+    ///
+    /// Everything downstream reads the profile through this one property and
+    /// sees exactly what it saw when the app kept a single one: `SessionEngine`,
+    /// the composers and the prompt builders know nothing about a library.
+    /// Assigning a whole profile replaces the selected entry, which is what
+    /// makes `$store.profile.role` in the settings form still work.
     var profile: UserProfile {
-        didSet { persist(profile, forKey: DefaultsKey.profile) }
+        get { profileLibrary.selected }
+        set { profileLibrary.replaceSelected(with: newValue) }
     }
 
     /// Thresholds handed to `SessionEngine` as configuration.
@@ -191,6 +225,27 @@ final class SettingsStore {
         }
     }
 
+    /// Where a request actually goes — this machine, a command-line tool, or
+    /// somebody's servers.
+    ///
+    /// Computed from the *effective* base URL rather than from the preset, so
+    /// an OpenAI preset repointed at `localhost` counts as local and an Ollama
+    /// preset repointed at a rented box does not.
+    var providerDestination: ProviderDestination {
+        ProviderDestination(preset: providerPreset, selection: providerSelection)
+    }
+
+    /// What the user is told **before** handing over a resume — which provider
+    /// gets it, and whether that means the text leaves the machine.
+    ///
+    /// Here rather than in the view because it is a statement of fact about the
+    /// current selection, and because it has to be right: a resume carries a
+    /// name, employers and often a phone number, and a user who would not have
+    /// sent that to a cloud has to learn it before pressing, not after.
+    var resumePrivacyNote: String {
+        providerDestination.resumeNote(providerName: providerPreset.name)
+    }
+
     /// Used when a hand-edited preferences file names a provider that no longer
     /// exists: the app falls back to the shipped default instead of ending up
     /// with no provider at all.
@@ -220,8 +275,11 @@ final class SettingsStore {
     ) {
         self.defaults = defaults
         self.secrets = secrets
-        self.profile = Self.decode(UserProfile.self, from: defaults, key: DefaultsKey.profile)
-            ?? .empty
+        self.profileLibrary = Self.decode(
+            ProfileLibrary.self,
+            from: defaults,
+            key: DefaultsKey.profileLibrary
+        ) ?? Self.migratedLibrary(from: defaults)
         self.turnSegmentation = (Self.decode(
             TurnSegmentationConfig.self,
             from: defaults,
@@ -243,7 +301,59 @@ final class SettingsStore {
             ProviderFactory.preset(id: selection.presetID) == nil ? nil : selection
         } ?? ProviderFactory.defaultSelection
         migrateLegacyProviderKeyIfNeeded()
+        finishProfileMigrationIfNeeded()
         refreshProviderKeyPresence()
+    }
+
+    // MARK: - Profiles
+
+    /// Adds a profile and selects it. Returns its id so the caller can put the
+    /// cursor in the name field.
+    @discardableResult
+    func addProfile(named name: String = "") -> UserProfile.ID {
+        profileLibrary.add(UserProfile(name: name))
+    }
+
+    func selectProfile(_ id: UserProfile.ID) {
+        profileLibrary.select(id)
+    }
+
+    func renameProfile(_ id: UserProfile.ID, to name: String) {
+        profileLibrary.rename(id, to: name)
+    }
+
+    /// Deletes a profile. The library keeps at least one and moves the
+    /// selection to a neighbour, so there is never a moment with no profile.
+    func removeProfile(_ id: UserProfile.ID) {
+        profileLibrary.remove(id)
+    }
+
+    /// Writes a profile back by id — used when a profile is edited somewhere
+    /// other than the selection, and by the resume import when it applies the
+    /// draft it built for one particular entry.
+    func updateProfile(_ profile: UserProfile) {
+        profileLibrary.update(profile)
+    }
+
+    /// Turns the single profile of an older build into a library.
+    ///
+    /// Runs before anything reads `profileLibrary`, so the upgrade is invisible:
+    /// the profile the user filled in months ago becomes the first entry and
+    /// stays selected. Losing it here would be found out mid-interview, when the
+    /// suggestions stop sounding like them.
+    private static func migratedLibrary(from defaults: UserDefaults) -> ProfileLibrary {
+        guard let legacy = decode(UserProfile.self, from: defaults, key: DefaultsKey.legacyProfile)
+        else { return .initial }
+        return ProfileLibrary(migrating: legacy)
+    }
+
+    /// Writes the migrated library out and retires the old key — after the new
+    /// value is on disk, never before, so a failure leaves the original intact.
+    private func finishProfileMigrationIfNeeded() {
+        guard defaults.data(forKey: DefaultsKey.legacyProfile) != nil else { return }
+        persist(profileLibrary, forKey: DefaultsKey.profileLibrary)
+        guard defaults.data(forKey: DefaultsKey.profileLibrary) != nil else { return }
+        defaults.removeObject(forKey: DefaultsKey.legacyProfile)
     }
 
     // MARK: - Provider key
