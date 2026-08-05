@@ -46,6 +46,10 @@ nonisolated final class ScreenCaptureService: ScreenCapturer {
     func capture() async -> ScreenContext {
         let startedAt = ContinuousClock.now
 
+        // The turn this capture belongs to was superseded before the frame was
+        // even asked for.
+        guard !Task.isCancelled else { return .none }
+
         let frame: CGImage
         do {
             frame = try await grab()
@@ -56,6 +60,18 @@ nonisolated final class ScreenCaptureService: ScreenCapturer {
         }
 
         let captured = ContinuousClock.now
+
+        // A newer `Them` turn arrived while the frame was being taken, so what is
+        // left of this capture is its expensive half — text recognition over a
+        // full-resolution screen — spent on a question nobody is asking any more
+        // (ADR-0003). Dropped rather than reported: a superseded capture is not a
+        // failure the user has anything to do about.
+        guard !Task.isCancelled else {
+            Self.log.info(
+                "СНИМОК ЭКРАНА ОТМЕНЁН снимок_мс=\(Self.milliseconds(startedAt, captured), privacy: .public)"
+            )
+            return .none
+        }
 
         // Text first, from the full-resolution frame: it is the half that has to
         // be exact, and shrinking the picture is what would blur it.

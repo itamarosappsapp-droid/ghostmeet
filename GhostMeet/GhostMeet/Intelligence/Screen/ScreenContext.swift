@@ -61,6 +61,12 @@ nonisolated struct ScreenContext: Equatable, Sendable {
 /// `capture()` cannot fail: the caller has no useful response to a thrown error
 /// beyond carrying on without a picture, so the failure travels inside the
 /// result.
+///
+/// **Cancellation is part of the contract.** A `Them` turn superseded by a newer
+/// one cancels the capture it started, and an implementation that ignores that
+/// goes on spending a frame and a few hundred milliseconds of text recognition on
+/// a question nobody is asking any more (ADR-0003). A cancelled capture answers
+/// `.none`: nothing was captured, and nothing went wrong.
 nonisolated protocol ScreenCapturer: Sendable {
     func capture() async -> ScreenContext
 }

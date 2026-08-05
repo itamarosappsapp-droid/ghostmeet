@@ -8,11 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-The MVP pipeline runs end to end: both channels are captured, turns are cut on pauses, speech is recognised locally, and a closed `Them` turn starts a suggestion on its own. **315 tests** across 47 suites (Swift Testing, target `GhostMeetTests`).
+The MVP pipeline runs end to end: both channels are captured, turns are cut on pauses, speech is recognised locally, and a closed `Them` turn starts a suggestion on its own. **323 tests** across 48 suites (Swift Testing, target `GhostMeetTests`).
 
-Done: project skeleton and test target, microphone capture with VPIO, turn segmentation, WhisperKit recognition with model selection, the overlay window, the `Them` channel (both backends, SCK by default), settings with per-provider keys, the proactive `Assist` loop with a streaming Claude provider, the full provider router (OpenAI-compatible family, Gemini, CLI tools), screenshot and OCR on every request, global hotkeys and per-channel indicators.
+Done: project skeleton and test target, microphone capture with VPIO, turn segmentation, WhisperKit recognition with model selection, the overlay window, the `Them` channel (both backends, SCK by default), settings with per-provider keys, the proactive `Assist` loop with a streaming Claude provider, the full provider router (OpenAI-compatible family, Gemini, CLI tools), screenshot and OCR on every request, the suggestion lifecycle (a newer `Them` turn supersedes the answer in flight), global hotkeys and per-channel indicators.
 
-Not done: cancelling a stale suggestion (ticket 08) and the manual `Ask` / `Solve on screen` modes (11). Tickets live in `.scratch/interview-mvp/`.
+Not done: the manual `Ask` / `Solve on screen` modes (ticket 11). Tickets live in `.scratch/interview-mvp/`.
 
 The audio investigation is over and its scaffolding is gone: no diagnostics object, no level probes, no environment flags of our own. What survived it are the fixes it found — `MicCaptureService.firstChannel`, `ProcessTap.DeliveryFormat`, `PCMMixdown`, the mic tap installed with `format: nil` — and their regression tests. Logging is lifecycle-only now: capture start and failure (`SessionEngine`), `Them` channel status (`SessionController`), recognition model phase (`SpeechModelStatus`). Nothing per frame, nothing anybody said. Keep it that way — a per-frame log in this app writes the conversation to disk.
 
@@ -157,6 +157,8 @@ These are the decisions that shape everything else; changing one has ripple effe
 6. **LLM** — one `LLMProvider` protocol behind an `LLMRouter`; cloud, local-HTTP, and CLI providers all conform to it. Streaming everywhere except the Summarizer.
 
 **The loop is proactive** ([ADR-0003](docs/adr/0003-proactive-suggestion-loop.md)): closing a `Them` turn fires steps 3–6 automatically, with a screenshot attached to *every* request. A new `Them` turn cancels the in-flight generation and restarts; `You` speech cancels nothing — the suggestion stays on screen as a crib until `Them` speaks again. Hotkeys are a secondary path, not the main one.
+
+Cancellation there is narrower than it looks, and the boundary is load-bearing: a superseded turn loses its *answer* — the stream, the screenshot being taken for it, the right to start a suggestion at all — and keeps its *words*. Speech recognition is never cancelled, because the interlocutor who paused mid-sentence left two turns behind and the new request is composed from both; cancel it and the prompt gets an empty `Them` turn instead of the first half of the question. What stops the stale branch is `SessionEngine.answering`, not `Task.cancel()`.
 
 The planned Swift file layout (`App/`, `UI/`, `Audio/`, `Speech/`, `Intelligence/{Context,LLM,Screen}/`, `Input/`, `Settings/`, `Utilities/`) is in [docs/GhostMeet.md](docs/GhostMeet.md) — follow it when creating files rather than inventing a new structure.
 
