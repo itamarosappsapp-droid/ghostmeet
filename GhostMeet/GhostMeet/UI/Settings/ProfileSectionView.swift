@@ -118,6 +118,21 @@ struct ProfileSectionView: View {
                 .font(.footnote)
                 .foregroundStyle(privacyColor)
 
+            // Advice, not just a warning. Saying "this leaves your machine" and
+            // stopping there leaves the user with nothing to do about it; the
+            // fix costs a minute and removes the exposure entirely. The profile
+            // needs the experience, never the name.
+            Label(
+                """
+                Перед загрузкой уберите из резюме личные данные: имя, телефон, почту, ссылки на профили, \
+                названия компаний, если они под NDA. Для профиля важен опыт, а не то, как вас зовут, — \
+                обезличенное резюме даст ровно тот же результат.
+                """,
+                systemImage: "person.crop.circle.badge.xmark"
+            )
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+
             Text("Файл никуда не сохраняется: из него берётся только текст, он уходит одним запросом, и в приложении остаётся лишь профиль, который вы утвердите. Загружается в выбранный профиль — «\(store.profile.displayName)».")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
