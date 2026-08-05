@@ -112,18 +112,6 @@ final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
         // Listening is not started here on purpose: the microphone prompt would
         // come up before the user has asked for anything, and the first thing
         // they see would be a permission dialog rather than the overlay.
-        //
-        // Exception, temporary: the overlay is a non-activating panel excluded
-        // from screen capture, so during the "hears nothing" investigation there
-        // is no way to press the button from outside. Remove with
-        // `CaptureDiagnostics`.
-        //
-        // Even that lever waits for the model: starting blind is exactly the bug
-        // this ticket is about, and an autostart that loses the first turn would
-        // reproduce it in every diagnostic run.
-        if ProcessInfo.processInfo.environment["GHOSTMEET_AUTOSTART"] == "1" {
-            session.startWhenRecognitionIsReady()
-        }
 
         overlayWindowController.show()
     }

@@ -8,7 +8,6 @@
 @preconcurrency import AVFoundation
 import CoreAudio
 import Foundation
-import os
 import Observation
 
 /// What the `Them` capture is doing, in words meant for the user.
@@ -75,9 +74,6 @@ nonisolated final class ProcessTapCaptureService: ThemAudioSource, @unchecked Se
     private var converter: AVAudioConverter?
     private var lastKnownName: String?
     private var listener: AudioObjectPropertyListenerBlock?
-
-    /// Temporary probe — remove with `CaptureDiagnostics`.
-    private let level = ChannelLevelProbe(label: "them-tap")
 
     /// - Parameters:
     ///   - sourceApplicationID: stable id of the chosen application, or `nil`
@@ -193,20 +189,9 @@ nonisolated final class ProcessTapCaptureService: ThemAudioSource, @unchecked Se
         let handler = onFrame
         lock.unlock()
 
-        // Temporary probe: which processes of the chosen application we ended up
-        // tapping. `afplay` works while Chrome does not, and the difference can
-        // only be in this list. Remove with `CaptureDiagnostics`.
-        Logger(subsystem: "Mixxy.GhostMeet", category: "capture").info("""
-            ИСТОЧНИК выбран=\(id, privacy: .public) \
-            имя=\(application.name, privacy: .public) \
-            объекты=\(application.processObjectIDs.map(String.init).joined(separator: ","), privacy: .public) \
-            звучит=\(application.isPlayingAudio, privacy: .public)
-            """)
-
         do {
             try tap.start(processObjectIDs: application.processObjectIDs) { [weak self] buffer in
                 guard let self, let handler, let frame = self.makeFrame(from: buffer) else { return }
-                self.level.saw(samples: frame.samples, sampleRate: frame.sampleRate)
                 handler(frame)
             }
             publish(.capturing(application: application.name))

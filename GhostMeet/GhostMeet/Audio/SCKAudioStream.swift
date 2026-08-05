@@ -10,7 +10,6 @@ import CoreMedia
 import Darwin
 import Foundation
 import ScreenCaptureKit
-import os
 
 /// One application as ScreenCaptureKit offers it, reduced to the fields the
 /// source picker's id is built from.
@@ -86,17 +85,8 @@ nonisolated struct ShareableApplication: Hashable, Sendable {
 
 /// What ScreenCaptureKit is pointed at.
 nonisolated enum SCKAudioScope: Hashable, Sendable {
-    /// The processes of the chosen application, and nothing else. What the
-    /// product uses.
+    /// The processes of the chosen application, and nothing else.
     case applications(Set<pid_t>)
-    /// Everything the display is playing.
-    ///
-    /// Temporary probe for the ADR-0005 experiment: the question "does
-    /// ScreenCaptureKit still deliver audio while voice processing is on" has to
-    /// be answerable even when the noise-maker at hand owns no window and is
-    /// therefore not offered as an application. Never reachable from the
-    /// interface — see `SCKCaptureService.wholeDisplayProbeEnabled`.
-    case wholeDisplay
 }
 
 /// Where the list of applications ScreenCaptureKit is willing to capture comes
@@ -168,16 +158,11 @@ nonisolated final class SCKAudioStream: NSObject, ThemAudioStream, SCStreamOutpu
     /// Called when the system stops the stream by itself.
     var onFailure: (@Sendable (Error) -> Void)?
 
-    private let log = Logger(subsystem: "Mixxy.GhostMeet", category: "capture")
     private let queue = DispatchQueue(label: "com.ghostmeet.sck-audio", qos: .userInitiated)
     private let lock = NSLock()
 
     private var stream: SCStream?
     private var onBuffer: (@Sendable (AVAudioPCMBuffer) -> Void)?
-
-    /// Temporary probe — remove with `CaptureDiagnostics`.
-    private let level = ChannelLevelProbe(label: "them-sck-raw")
-    private var loggedFormat = false
 
     override init() { super.init() }
 
@@ -222,8 +207,6 @@ nonisolated final class SCKAudioStream: NSObject, ThemAudioStream, SCStreamOutpu
                 including: applications,
                 exceptingWindows: []
             )
-        case .wholeDisplay:
-            filter = SCContentFilter(display: display, excludingWindows: [])
         }
 
         let configuration = SCStreamConfiguration()
@@ -244,7 +227,6 @@ nonisolated final class SCKAudioStream: NSObject, ThemAudioStream, SCStreamOutpu
         lock.lock()
         self.onBuffer = onBuffer
         self.stream = stream
-        loggedFormat = false
         lock.unlock()
 
         do {
@@ -288,17 +270,10 @@ nonisolated final class SCKAudioStream: NSObject, ThemAudioStream, SCStreamOutpu
         guard let handler else { return }
 
         try? sampleBuffer.withAudioBufferList { list, _ in
-            logDeliveredLayout(list, sampleRate: asbd.mSampleRate, reported: asbd)
             guard let mono = PCMMixdown.mono(
                 from: list.unsafePointer,
                 sampleRate: asbd.mSampleRate
-            ), mono.frameLength > 0, let samples = mono.floatChannelData?[0] else { return }
-
-            level.saw(
-                samples: samples,
-                count: Int(mono.frameLength),
-                sampleRate: asbd.mSampleRate
-            )
+            ), mono.frameLength > 0 else { return }
             handler(mono)
         }
     }
@@ -312,32 +287,6 @@ nonisolated final class SCKAudioStream: NSObject, ThemAudioStream, SCStreamOutpu
         guard isCurrent else { return }
         stop()
         onFailure?(error)
-    }
-
-    /// Temporary probe: what the stream *says* it delivers versus the shape of
-    /// the buffer list it actually hands over. The whole class of silent audio
-    /// bugs in this project lives in the gap between those two.
-    /// Delete with `CaptureDiagnostics`.
-    private func logDeliveredLayout(
-        _ list: UnsafeMutableAudioBufferListPointer,
-        sampleRate: Double,
-        reported: AudioStreamBasicDescription
-    ) {
-        lock.lock()
-        let shouldLog = !loggedFormat
-        loggedFormat = true
-        lock.unlock()
-        guard shouldLog else { return }
-
-        let planar = list.count > 1
-        log.info("""
-            SCK ФОРМАТ заявлено=\(sampleRate, privacy: .public)Гц/\
-            \(reported.mChannelsPerFrame, privacy: .public)кан/\
-            \(reported.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0 ? "planar" : "interleaved", privacy: .public) \
-            доставлено=списков:\(list.count, privacy: .public)/\
-            \(planar ? "planar" : "interleaved", privacy: .public) \
-            байт=\(list.first?.mDataByteSize ?? 0, privacy: .public)
-            """)
     }
 }
 

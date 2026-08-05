@@ -8,7 +8,6 @@
 @preconcurrency import AVFoundation
 import CoreAudio
 import Foundation
-import os
 
 /// The `Them` channel taken with ScreenCaptureKit — the second capture backend
 /// of ADR-0001.
@@ -35,10 +34,6 @@ nonisolated final class SCKCaptureService: ThemAudioSource, @unchecked Sendable 
     private let targetFormat: AVAudioFormat
     private let lock = NSLock()
     private let listenerQueue = DispatchQueue(label: "com.ghostmeet.sck.changes")
-    private let log = Logger(subsystem: "Mixxy.GhostMeet", category: "capture")
-
-    /// Temporary probe — remove with `CaptureDiagnostics`.
-    private let level = ChannelLevelProbe(label: "them-sck")
 
     private var _isRunning = false
     private var _status: ThemCaptureStatus = .idle
@@ -191,37 +186,28 @@ nonisolated final class SCKCaptureService: ThemAudioSource, @unchecked Sendable 
         }
 
         do {
-            let offered = try await stream.shareableApplications()
-            let matching = offered.filter { $0.matches(sourceApplicationID: id) }
-            logCandidates(offered, id: id, matched: matching)
+            let matching = try await stream.shareableApplications()
+                .filter { $0.matches(sourceApplicationID: id) }
 
-            let scope: SCKAudioScope
-            let name: String
-
-            if Self.wholeDisplayProbeEnabled {
-                scope = .wholeDisplay
-                name = "весь дисплей (диагностический режим)"
-            } else if matching.isEmpty {
+            guard !matching.isEmpty else {
                 lock.lock()
                 let remembered = lastKnownName ?? id
                 lock.unlock()
                 publish(.waitingForSource(application: remembered))
                 return
-            } else {
-                scope = .applications(Set(matching.map(\.processIdentifier)))
-                // The application itself names the entry, not one of its
-                // helpers: the user picked «Google Chrome», not «Google Chrome
-                // Helper (Renderer)».
-                name = matching.first { $0.bundleIdentifier == id }?.displayName
-                    ?? matching[0].displayName
-                lock.lock()
-                lastKnownName = name
-                lock.unlock()
             }
+
+            let scope = SCKAudioScope.applications(Set(matching.map(\.processIdentifier)))
+            // The application itself names the entry, not one of its helpers: the
+            // user picked «Google Chrome», not «Google Chrome Helper (Renderer)».
+            let name = matching.first { $0.bundleIdentifier == id }?.displayName
+                ?? matching[0].displayName
+            lock.lock()
+            lastKnownName = name
+            lock.unlock()
 
             try await stream.start(scope: scope) { [weak self] buffer in
                 guard let self, let frame = self.makeFrame(from: buffer) else { return }
-                self.level.saw(samples: frame.samples, sampleRate: frame.sampleRate)
                 handler(frame)
             }
             publish(.capturing(application: name))
@@ -306,36 +292,5 @@ nonisolated final class SCKCaptureService: ThemAudioSource, @unchecked Sendable 
 
         let samples = Array(UnsafeBufferPointer(start: channelData, count: Int(output.frameLength)))
         return AudioFrame(channel: .them, samples: samples, sampleRate: targetFormat.sampleRate)
-    }
-
-    // MARK: - Probes
-
-    /// Captures everything the display plays instead of one application.
-    ///
-    /// Temporary, and deliberately reachable only from the environment: the
-    /// ADR-0005 experiment needs a noise-maker, and the handiest one — a
-    /// command-line player — owns no window and is therefore never offered as an
-    /// application by ScreenCaptureKit. Remove with `CaptureDiagnostics`.
-    static var wholeDisplayProbeEnabled: Bool {
-        ProcessInfo.processInfo.environment["GHOSTMEET_SCK_WHOLE_DISPLAY"] == "1"
-    }
-
-    /// Temporary probe: which applications ScreenCaptureKit offered and whether
-    /// the chosen one was among them. "Nothing was matched" and "the match was
-    /// silent" look identical from outside. Remove with `CaptureDiagnostics`.
-    private func logCandidates(
-        _ offered: [ShareableApplication],
-        id: String,
-        matched: [ShareableApplication]
-    ) {
-        let names = offered
-            .map { "\($0.displayName)[\($0.bundleIdentifier ?? $0.executableURL?.path ?? "—")]" }
-            .joined(separator: ", ")
-        log.info("""
-            SCK ИСТОЧНИКИ выбран=\(id, privacy: .public) \
-            совпало=\(matched.count, privacy: .public) \
-            всего=\(offered.count, privacy: .public) \
-            список=\(names, privacy: .public)
-            """)
     }
 }

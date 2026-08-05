@@ -7,7 +7,6 @@
 // realtime capture thread by design, and the SDK does not say so in types yet.
 @preconcurrency import AVFoundation
 import Foundation
-import os
 
 /// Microphone capture: the source of the `You` channel.
 ///
@@ -41,9 +40,6 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
 
     private let engine = AVAudioEngine()
     private let targetFormat: AVAudioFormat
-
-    /// Temporary probe — remove with `CaptureDiagnostics`.
-    private let level = ChannelLevelProbe(label: "you-mic")
 
     /// Whether echo cancellation is switched on for this capture.
     ///
@@ -129,11 +125,6 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
             throw CaptureError.inputFormatUnavailable
         }
 
-        // Temporary probe: which device the engine actually reads from, and in
-        // what format. A silent capture with a lit microphone indicator looks the
-        // same whether the wrong device is selected or the right one is muted.
-        Self.logInputDevice(of: input, format: inputFormat, voiceProcessing: voiceProcessingEnabled)
-
         // The tap is installed with `nil` rather than with the format the node
         // reports. With voice processing on, the reported format and the one the
         // node actually delivers can differ, and a tap pinned to the wrong one
@@ -143,7 +134,6 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
         // buffer rather than from the reported format.
         let targetFormat = targetFormat
         let converterBox = ConverterBox()
-        let level = level
         input.installTap(onBus: 0, bufferSize: 4096, format: nil) { buffer, _ in
             guard let mono = Self.firstChannel(of: buffer) else { return }
             guard let converter = converterBox.converter(for: mono.format, to: targetFormat) else {
@@ -154,7 +144,6 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
                 converter: converter,
                 targetFormat: targetFormat
             ) else { return }
-            level.saw(samples: frame.samples, sampleRate: frame.sampleRate)
             onFrame(frame)
         }
 
@@ -173,43 +162,6 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         isRunning = false
-    }
-
-    /// Temporary probe for the "microphone delivers silence" investigation.
-    /// Remove with `CaptureDiagnostics`.
-    private static func logInputDevice(
-        of input: AVAudioInputNode,
-        format: AVAudioFormat,
-        voiceProcessing: Bool
-    ) {
-        let log = Logger(subsystem: "Mixxy.GhostMeet", category: "capture")
-
-        var deviceID = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID
-        )
-
-        var name: Unmanaged<CFString>?
-        var nameSize = UInt32(MemoryLayout<CFString?>.size)
-        var nameAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioObjectPropertyName,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        AudioObjectGetPropertyData(deviceID, &nameAddress, 0, nil, &nameSize, &name)
-        let deviceName = name?.takeRetainedValue() as String? ?? "неизвестно"
-
-        log.info("""
-            ВХОД: устройство=\(deviceName, privacy: .public) id=\(deviceID, privacy: .public) \
-            формат=\(format.sampleRate, privacy: .public)Гц/\(format.channelCount, privacy: .public)кан \
-            VPIO=\(voiceProcessing ? "вкл" : "выкл", privacy: .public)
-            """)
     }
 
     /// Takes channel 0 of a captured buffer as a mono buffer at the same rate.

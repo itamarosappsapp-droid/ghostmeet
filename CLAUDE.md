@@ -14,7 +14,7 @@ Done: project skeleton and test target, microphone capture with VPIO, turn segme
 
 Not done: cancelling a stale suggestion (ticket 08), screenshot and OCR in requests (09), hotkeys and state indicators (10), the manual `Ask` / `Solve on screen` modes (11). Tickets live in `.scratch/interview-mvp/`.
 
-**Temporary debugging scaffolding is still in the tree** — `App/CaptureDiagnostics.swift`, level probes, and the `GHOSTMEET_AUTOSTART` / `GHOSTMEET_VPIO` / `GHOSTMEET_SCK_WHOLE_DISPLAY` environment flags. The autostart flag changes behaviour and must not survive into a release. Remove it all once the live-call check is done; keep `MicChannelExtractionTests`.
+The audio investigation is over and its scaffolding is gone: no diagnostics object, no level probes, no environment flags of our own. What survived it are the fixes it found — `MicCaptureService.firstChannel`, `ProcessTap.DeliveryFormat`, `PCMMixdown`, the mic tap installed with `format: nil` — and their regression tests. Logging is lifecycle-only now: capture start and failure (`SessionEngine`), `Them` channel status (`SessionController`), recognition model phase (`SpeechModelStatus`). Nothing per frame, nothing anybody said. Keep it that way — a per-frame log in this app writes the conversation to disk.
 
 ```
 GhostMeet/                      ← repo root

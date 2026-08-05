@@ -106,9 +106,6 @@ nonisolated final class ProcessTap: @unchecked Sendable {
 
     private let delivery = DeliveryFormat()
 
-    /// Temporary probe — remove with `CaptureDiagnostics`.
-    private let probe = TapProbe()
-
     init() {}
 
     deinit { stop() }
@@ -181,7 +178,7 @@ nonisolated final class ProcessTap: @unchecked Sendable {
             &ioProcID,
             aggregateID,
             queue
-        ) { [delivery, probe] _, inputData, _, _, _ in
+        ) { [delivery] _, inputData, _, _, _ in
             // The format the tap *reports* and the layout it *delivers* do not
             // have to agree, and when they disagree nothing says so: the buffer
             // simply fails to be built and the frame vanishes. Chrome's tap
@@ -192,16 +189,10 @@ nonisolated final class ProcessTap: @unchecked Sendable {
                 sampleRate: format.sampleRate
             ) else { return }
 
-            let made = Self.monoBuffer(from: inputData, sampleRate: deliveredFormat.sampleRate)
-            probe.sawCallback(
-                buffers: inputData.pointee.mNumberBuffers,
-                bytes: inputData.pointee.mBuffers.mDataByteSize,
-                madeBuffer: made != nil,
-                frames: made?.frameLength ?? 0,
-                format: deliveredFormat
-            )
-
-            guard let buffer = made, buffer.frameLength > 0 else { return }
+            guard let buffer = Self.monoBuffer(
+                from: inputData,
+                sampleRate: deliveredFormat.sampleRate
+            ), buffer.frameLength > 0 else { return }
             onBuffer(buffer)
         }
         guard ioStatus == noErr, let ioProcID else {

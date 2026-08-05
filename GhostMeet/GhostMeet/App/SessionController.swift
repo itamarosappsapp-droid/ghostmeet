@@ -131,10 +131,10 @@ final class SessionController {
     /// Starts listening the moment the recognition model becomes usable, and not
     /// a moment earlier.
     ///
-    /// For callers that mean "listen to this call" rather than "listen now" — the
-    /// autostart lever, and later the hotkey pressed while the model is still
-    /// loading. Calling `start()` there would silently do nothing; this waits
-    /// instead, using the same observation trick as `followThresholds(of:)`.
+    /// For callers that mean "listen to this call" rather than "listen now" —
+    /// the hotkey pressed while the model is still loading (ticket 10). Calling
+    /// `start()` there would silently do nothing; this waits instead, using the
+    /// same observation trick as `followThresholds(of:)`.
     func startWhenRecognitionIsReady() {
         guard !isListening, !isStarting else { return }
         let ready = withObservationTracking {
@@ -268,15 +268,7 @@ extension SessionController {
         // cannot both run (ADR-0005). ScreenCaptureKit does not build an
         // aggregate device around the output device — the suspected cause — so
         // with that backend the defence stays on. `SettingsStore` owns the rule.
-        var voiceProcessing = settings.allowsVoiceProcessing
-
-        // Temporary lever for the ADR-0005 experiment: the two backends have to
-        // be measured with echo cancellation forced both ways, and the honest
-        // rule above deliberately does not allow that combination. Remove with
-        // `CaptureDiagnostics`.
-        if let forced = ProcessInfo.processInfo.environment["GHOSTMEET_VPIO"] {
-            voiceProcessing = forced == "1"
-        }
+        let voiceProcessing = settings.allowsVoiceProcessing
 
         // One source for the whole life of the engine, with the real backend
         // swapped inside it. Which of the two it is stays a setting the user can
@@ -286,19 +278,15 @@ extension SessionController {
         them.followSourceSelection(of: settings)
         them.followCaptureBackend(of: settings)
 
-        // Temporary probe for the "hears nothing" investigation: this status is
-        // the only place the `Them` side says why it is quiet, and nothing
-        // consumes it yet (that is ticket 10). Remove with `CaptureDiagnostics`.
+        // This status is the only place the `Them` side says why it is quiet, and
+        // no window consumes it yet (that is ticket 10). Logged deliberately: a
+        // channel that goes silent mid-call is the one failure the user cannot
+        // see, and the message already names the backend and the reason.
         them.onStatusChange = { [weak them] status in
             let backend = them?.backend.displayName ?? "—"
             Logger(subsystem: "Mixxy.GhostMeet", category: "capture")
                 .info("КАНАЛ THEM (\(backend, privacy: .public)): \(status.message, privacy: .public)")
         }
-        Logger(subsystem: "Mixxy.GhostMeet", category: "capture").info("""
-            СБОРКА бэкенд=\(settings.themCaptureBackend.displayName, privacy: .public) \
-            VPIO=\(voiceProcessing ? "вкл" : "выкл", privacy: .public) \
-            источник=\(settings.themSourceApplicationID ?? "—", privacy: .public)
-            """)
 
         return SessionController(
             engine: SessionEngine(

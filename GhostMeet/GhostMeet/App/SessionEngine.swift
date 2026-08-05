@@ -5,6 +5,7 @@
 
 import Foundation
 import Observation
+import os
 
 /// The one orchestrator of a call.
 ///
@@ -43,9 +44,18 @@ final class SessionEngine {
 
     private let clock: SessionClock
 
-    /// Temporary probe for the "hears nothing" investigation — see
-    /// `CaptureDiagnostics`. Remove together with that file.
-    @ObservationIgnored private let diagnostics = CaptureDiagnostics()
+    /// Lifecycle of capture only — which sources came up, and what stopped them.
+    ///
+    /// Deliberate, not debugging: the overlay is excluded from screen capture and
+    /// shows no log of its own, so when a user reports "it does not hear me" the
+    /// unified log is the only way to tell a capture that never started from one
+    /// that started and stayed quiet. Nothing per frame and nothing anybody said
+    /// is ever written here.
+    @ObservationIgnored private static let log = Logger(
+        subsystem: "Mixxy.GhostMeet",
+        category: "capture"
+    )
+
     private let recognizer: SpeechRecognizer
     private let sources: [AudioSource]
     /// The model behind the suggestions. Optional because the app has to be
@@ -108,11 +118,12 @@ final class SessionEngine {
         } catch {
             sources.forEach { $0.stop() }
             lastError = error.localizedDescription
-            diagnostics.captureFailed(error)
+            Self.log.error("ЗАХВАТ НЕ СТАРТОВАЛ причина=\(error.localizedDescription, privacy: .public)")
             throw error
         }
         isListening = true
-        diagnostics.captureStarted(sources.map { String(describing: type(of: $0)) })
+        let started = sources.map { String(describing: type(of: $0)) }.joined(separator: ", ")
+        Self.log.info("ЗАХВАТ СТАРТОВАЛ источники=\(started, privacy: .public)")
         startPauseWatchdog()
     }
 
@@ -134,9 +145,7 @@ final class SessionEngine {
     /// it, and never from what was said.
     func ingest(_ frame: AudioFrame) {
         guard let segmenter = segmenters[frame.channel] else { return }
-        diagnostics.sawFrame(frame, gate: config.silenceGateRMS)
         if let captured = segmenter.accept(frame, at: clock.now) {
-            diagnostics.closedTurn(captured)
             append(captured)
         }
     }
@@ -189,16 +198,10 @@ final class SessionEngine {
     private func recognize(turn id: Turn.ID, on channel: Channel, audio: SpeechAudio) {
         let recognizer = recognizer
         let task = Task { [weak self] in
-            var text = ""
-            do {
-                text = try await recognizer.transcribe(audio)
-                self?.diagnostics.recognised(channel: channel, text: text)
-            } catch {
-                self?.diagnostics.recognitionFailed(channel: channel, error: error)
-            }
-            guard !Task.isCancelled else { return }
             // A failed pass leaves the turn in place with no text: losing a turn
             // would be worse than showing one without words.
+            let text = (try? await recognizer.transcribe(audio)) ?? ""
+            guard !Task.isCancelled else { return }
             self?.apply(text: text, to: id)
             // The rest of the pipeline runs from here, and only for `Them`: the
             // interlocutor stopped talking, so a suggestion is asked for on its
