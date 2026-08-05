@@ -1,57 +1,82 @@
 //
-//  ClaudeProvider.swift
+//  GeminiProvider.swift
 //  GhostMeet
 //
 
 import Foundation
 
-/// The MVP cloud backend, behind `LLMProvider` (ADR-0001).
+/// Google Gemini behind `LLMProvider` (ADR-0001).
 ///
-/// Two properties are load-bearing rather than nice to have:
+/// Structurally a twin of `ClaudeProvider` — same streaming shape, same
+/// cancellation chain — because those two properties are what the product
+/// depends on, not the vendor:
 ///
-/// 1. **Streaming.** A suggestion has to start appearing while the model is
-///    still writing it, so fragments are yielded the moment they arrive.
+/// 1. **Streaming.** Fragments are yielded the moment they arrive, so the
+///    suggestion starts appearing while the model is still writing it.
 /// 2. **Real cancellation.** A new `Them` turn cancels the in-flight suggestion
 ///    (ADR-0003). Cancelling the consuming task terminates the stream, which
-///    cancels the work task, which tears down the HTTP request — the answer to
-///    the previous question is never paid for or finished in the background.
+///    cancels the work task, which tears down the HTTP request.
 ///
-/// The key is read from the keychain per request and dropped again; it is never
-/// held in a property, so a provider instance is safe to keep around.
-nonisolated struct ClaudeProvider: LLMProvider {
+/// Everything that differs from Claude — the URL, the header the key rides in,
+/// the request tree, the chunk shape — lives in `GeminiWireFormat`.
+///
+/// The key is read per request and dropped again; it is never held in a
+/// property, so a provider instance is safe to keep around.
+nonisolated struct GeminiProvider: LLMProvider {
 
-    /// Model and generation settings, in one place so the latency/quality
-    /// trade-off is visible rather than scattered through the request builder.
+    /// Model and generation settings. Both the address and the model stay
+    /// configurable: the settings screen lets the user retarget the provider at
+    /// a gateway that speaks the same dialect.
     nonisolated struct Configuration: Equatable, Sendable {
 
-        /// Anthropic's current top model. Kept explicit — the MVP has one
-        /// provider and no router, so there is nothing to negotiate at runtime.
-        var model: String = "claude-opus-5"
+        /// Current stable Gemini, multimodal and fast. Flash rather than Pro on
+        /// purpose: this scenario pays for latency in seconds of silence on
+        /// camera, and the Pro tier is preview-only besides.
+        var model: String = "gemini-3.6-flash"
 
-        /// `low` on purpose. The product promise is a suggestion inside the
-        /// ~800 ms pause; the model is already generating after STT and a
-        /// screenshot, and higher effort spends its budget before the first
-        /// visible character.
-        var effort: String = "low"
+        /// Version-bearing prefix; the method name is appended per request.
+        var baseURL: String = "https://generativelanguage.googleapis.com/v1beta"
 
-        /// Off on purpose, for the same reason: on this model thinking is on by
-        /// default and its tokens land *before* any answer text, which reads on
-        /// screen as a long pause — precisely what the overlay exists to avoid.
-        /// The system prompt carries the guard against internal tags leaking
-        /// into the answer that turning thinking off calls for.
-        var thinkingEnabled: Bool = false
-
-        var endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
-
-        var apiVersion: String = "2023-06-01"
+        /// `low`, for the same reason Claude runs with thinking off: thinking
+        /// tokens land *before* any answer text, and on screen that reads as a
+        /// long pause — precisely what the overlay exists to avoid. `low` rather
+        /// than `minimal` because it is the one level every model from 2.5
+        /// upwards accepts, so a user who retypes the model does not get a 400.
+        /// Set to nil for a model old enough not to know the field at all.
+        var thinkingLevel: String? = "low"
 
         static let `default` = Configuration()
+
+        /// What the user picked, with the overrides they typed applied.
+        ///
+        /// A blank field means "keep the preset", not "send an empty address" —
+        /// which is why this is a resolution step and not a plain assignment.
+        static func resolve(
+            preset: ProviderPreset,
+            selection: ProviderSelection
+        ) throws -> Configuration {
+            let base = override(selection.baseURL) ?? preset.defaultBaseURL
+            let model = override(selection.model) ?? preset.defaultModel
+
+            guard override(base) != nil else {
+                throw LLMFailure.provider("Для провайдера «\(preset.name)» не задан адрес API.")
+            }
+            guard override(model) != nil else {
+                throw LLMFailure.provider("Для провайдера «\(preset.name)» не задана модель.")
+            }
+            return Configuration(model: model, baseURL: base)
+        }
+
+        private static func override(_ value: String) -> String? {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
     }
 
-    let name = "Claude"
+    let name = "Gemini"
 
-    /// Anthropic takes images and streams, so `Solve on screen` works at full
-    /// strength here — which is why it stays the default for this scenario.
+    /// Gemini takes images and streams, so `Solve on screen` works at full
+    /// strength.
     let capabilities = ProviderCapabilities.multimodal
 
     private let configuration: Configuration
@@ -104,7 +129,7 @@ nonisolated struct ClaudeProvider: LLMProvider {
         let response = try await transport.send(outgoing)
 
         guard response.statusCode == 200 else {
-            throw ClaudeWireFormat.failure(
+            throw GeminiWireFormat.failure(
                 status: response.statusCode,
                 body: await collect(response.lines)
             )
@@ -112,7 +137,7 @@ nonisolated struct ClaudeProvider: LLMProvider {
 
         for try await line in response.lines {
             try Task.checkCancellation()
-            switch ClaudeWireFormat.decode(line: line) {
+            switch GeminiWireFormat.decode(line: line) {
             case .text(let fragment):
                 continuation.yield(fragment)
             case .failure(let failure):
@@ -126,12 +151,16 @@ nonisolated struct ClaudeProvider: LLMProvider {
     }
 
     private func urlRequest(for request: SuggestionRequest, key: String) throws -> URLRequest {
-        var urlRequest = URLRequest(url: configuration.endpoint)
+        let endpoint = try GeminiWireFormat.endpoint(
+            baseURL: configuration.baseURL,
+            model: configuration.model
+        )
+        var urlRequest = URLRequest(url: endpoint)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "content-type")
-        urlRequest.setValue(key, forHTTPHeaderField: "x-api-key")
-        urlRequest.setValue(configuration.apiVersion, forHTTPHeaderField: "anthropic-version")
-        urlRequest.httpBody = try ClaudeWireFormat.body(for: request, configuration: configuration)
+        // In a header, never in `?key=`: a secret in a URL ends up in logs.
+        urlRequest.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+        urlRequest.httpBody = try GeminiWireFormat.body(for: request, configuration: configuration)
         return urlRequest
     }
 
@@ -149,5 +178,3 @@ nonisolated struct ClaudeProvider: LLMProvider {
     }
 }
 
-extension ClaudeProvider {
-}

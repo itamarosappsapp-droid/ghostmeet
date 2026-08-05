@@ -122,6 +122,39 @@ final class SessionController {
             }
         }
     }
+
+    // MARK: - Provider
+
+    /// Keeps the model equal to what the settings screen shows.
+    ///
+    /// The same mechanism as `followThresholds(of:)`: the store is observable,
+    /// so re-reading it after every change is the whole thing. Switching from
+    /// Claude to a local server — or fixing a base URL — takes effect on the
+    /// next suggestion, with no restart of the app and no restart of the call.
+    func followProviderSelection(of settings: SettingsStore) {
+        withObservationTracking {
+            applyProvider(from: settings)
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.followProviderSelection(of: settings)
+            }
+        }
+    }
+
+    /// Builds the selected provider and hands it to the engine.
+    ///
+    /// A selection that cannot be built — a mistyped base URL, an emptied model
+    /// — leaves the previous provider in place on purpose: the user is editing a
+    /// text field mid-call, and going silent after every keystroke that does not
+    /// yet parse would be worse than answering with the provider that worked.
+    /// The reason is not swallowed, it is shown by the settings screen through
+    /// `SettingsStore.providerConfigurationError`, next to the field that caused
+    /// it — never as a system banner, which would be drawn over the shared
+    /// screen (ADR-0004).
+    private func applyProvider(from settings: SettingsStore) {
+        guard let provider = try? settings.makeProvider() else { return }
+        engine.provider = provider
+    }
 }
 
 extension SessionController {
@@ -161,6 +194,12 @@ extension SessionController {
     ///
     /// `Them` follows the settings screen on its own: re-pointing the tap at
     /// another application mid-call needs no restart of the session.
+    ///
+    /// The model is whichever one the settings screen selected, built through
+    /// `ProviderFactory` — never a hard-wired Claude. `provider` overrides it so
+    /// that a test can put a stub in the same slot; when it does, nothing should
+    /// call `followProviderSelection(of:)` on the result, or the stub would be
+    /// replaced by the user's choice.
     static func dualChannel(
         settings: SettingsStore,
         recognizer: SpeechRecognizer,
@@ -173,7 +212,7 @@ extension SessionController {
             engine: SessionEngine(
                 sources: [MicCaptureService(), them],
                 recognizer: recognizer,
-                provider: provider ?? ClaudeProvider.live(settings: settings),
+                provider: provider ?? (try? settings.makeProvider()),
                 // The profile is read at request time rather than captured, so
                 // editing it mid-call takes effect on the next suggestion.
                 composer: AssistSuggestionComposer { settings.profile },

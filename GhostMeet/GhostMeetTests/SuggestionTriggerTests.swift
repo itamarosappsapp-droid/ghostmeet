@@ -242,6 +242,7 @@ private final class StubLLMProvider: LLMProvider, @unchecked Sendable {
     }
 
     let name = "Заглушка"
+    let capabilities = ProviderCapabilities.multimodal
 
     private let lock = NSLock()
     private let script: Script

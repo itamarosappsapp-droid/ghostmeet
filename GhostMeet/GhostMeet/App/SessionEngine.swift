@@ -47,7 +47,13 @@ final class SessionEngine {
     /// The model behind the suggestions. Optional because the app has to be
     /// usable — capture, transcript, settings — before a provider is configured;
     /// with none, a closed `Them` turn simply asks for nothing.
-    private let provider: (any LLMProvider)?
+    ///
+    /// Settable for the same reason `config` is: picking another provider in
+    /// settings has to take effect on the next suggestion, not at the next
+    /// launch. It is read when a generation starts, so a swap never disturbs the
+    /// one already streaming. `SessionController.followProviderSelection(of:)`
+    /// is what keeps it equal to the settings screen.
+    @ObservationIgnored var provider: (any LLMProvider)?
     private let composer: any SuggestionComposer
     private let segmenters: [Channel: TurnSegmenter]
     private var pauseWatchdog: Timer?

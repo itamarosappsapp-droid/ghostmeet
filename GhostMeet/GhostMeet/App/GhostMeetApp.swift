@@ -83,6 +83,10 @@ final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
         // from here on; nothing else has to know a change happened.
         session.followThresholds(of: settings)
 
+        // Same for the provider: picking another model — or fixing its address —
+        // takes effect on the next suggestion, without relaunching the app.
+        session.followProviderSelection(of: settings)
+
         // Listening is not started here on purpose: the microphone prompt would
         // come up before the user has asked for anything, and the first thing
         // they see would be a permission dialog rather than the overlay.

@@ -39,6 +39,11 @@ nonisolated protocol LLMProvider: Sendable {
     /// Human-readable name for the settings screen and for error messages.
     var name: String { get }
 
+    /// What this backend accepts. Read *before* a request is assembled: a
+    /// screenshot handed to a text-only model is a failed request, not a worse
+    /// answer, and the automatic loop attaches one every time (ADR-0003).
+    var capabilities: ProviderCapabilities { get }
+
     /// Streams the answer in fragments, in order.
     ///
     /// **Cancellation is part of the contract, not a nicety.** A new `Them`

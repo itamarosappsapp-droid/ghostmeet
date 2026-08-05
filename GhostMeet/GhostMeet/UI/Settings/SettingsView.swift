@@ -35,6 +35,7 @@ struct SettingsView: View {
             profileSection
             sourceApplicationSection
             recognitionSection
+            providerSection
             providerKeySection
             segmentationSection
         }
@@ -217,38 +218,141 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Provider key
+    // MARK: - Provider
 
-    private var providerKeySection: some View {
-        Section("Ключ провайдера") {
-            SecureField("API-ключ", text: $providerKeyDraft)
-                .textFieldStyle(.roundedBorder)
-                .onSubmit(saveProviderKey)
-
-            HStack {
-                Button("Сохранить", action: saveProviderKey)
-                    .disabled(providerKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button("Удалить", role: .destructive) {
-                    providerKeyDraft = ""
-                    store.removeProviderKey()
+    /// Which model answers, and everything about it the user may need to change.
+    ///
+    /// The presets are a convenience, not a fence: base URL, model and — for a
+    /// CLI tool — the command stay editable, so a provider nobody put on the
+    /// list is reached by pointing an OpenAI-compatible preset at it. An empty
+    /// field means "as in the preset", which is why each one shows the preset's
+    /// own value as its placeholder rather than pre-filling it.
+    private var providerSection: some View {
+        Section("Провайдер") {
+            Picker("Провайдер", selection: $store.providerSelection.presetID) {
+                ForEach(ProviderFactory.presets) { preset in
+                    Text(preset.name).tag(preset.id)
                 }
-                .disabled(!store.hasProviderKey)
-                Spacer()
-                Text(store.hasProviderKey ? "Ключ сохранён в Keychain" : "Ключ не задан")
-                    .font(.callout)
+            }
+
+            if store.providerPreset.transport == .cli {
+                LabeledContent("Команда") {
+                    TextField(
+                        store.providerPreset.command.joined(separator: " "),
+                        text: $store.providerSelection.commandOverride
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+
+                Text("Приложение, запущенное из Finder, видит короткий системный PATH и может не найти инструмент. Если ответов нет — впишите полный путь, например «/opt/homebrew/bin/claude -p».")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                LabeledContent("Базовый адрес") {
+                    TextField(
+                        store.providerPreset.defaultBaseURL,
+                        text: $store.providerSelection.baseURL
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+                LabeledContent("Модель") {
+                    TextField(
+                        store.providerPreset.defaultModel,
+                        text: $store.providerSelection.model
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+
+                Text("Пустое поле означает «как в предустановке». Свой адрес и своя модель — это способ подключить провайдера, которого нет в списке.")
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
             }
 
-            if let error = store.lastSecretError {
+            capabilityNotice
+
+            if let error = store.providerConfigurationError {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(.footnote)
                     .foregroundStyle(.red)
             }
 
-            Text("Ключ хранится только в системном Keychain — не в настройках приложения, не в файлах и не в логах.")
+            Text("Смена провайдера применяется сразу: следующая подсказка уйдёт уже новому — перезапуск не нужен.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    /// What the chosen provider can actually accept.
+    ///
+    /// Shown as a warning and not as a footnote when images are out: `Solve on
+    /// screen` is the primary mode of this scenario, and a user who picked a
+    /// text-only model has to learn it here rather than from a weaker answer
+    /// during the interview.
+    @ViewBuilder
+    private var capabilityNotice: some View {
+        if store.providerAcceptsImages {
+            Label(store.providerCapabilityNote, systemImage: "photo")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        } else {
+            Label(store.providerCapabilityNote, systemImage: "exclamationmark.triangle")
+                .font(.footnote)
+                .foregroundStyle(.orange)
+        }
+    }
+
+    // MARK: - Provider key
+
+    /// The key of the selected provider — and only of it.
+    ///
+    /// Absent altogether where the preset does not need one: a local server and
+    /// a CLI tool authenticate nobody, and an empty field there would read as
+    /// something the user forgot to fill in.
+    @ViewBuilder
+    private var providerKeySection: some View {
+        Section("Ключ · \(store.providerPreset.name)") {
+            if store.providerRequiresKey {
+                SecureField("API-ключ", text: $providerKeyDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(saveProviderKey)
+
+                HStack {
+                    Button("Сохранить", action: saveProviderKey)
+                        .disabled(providerKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button("Удалить", role: .destructive) {
+                        providerKeyDraft = ""
+                        store.removeProviderKey()
+                    }
+                    .disabled(!store.hasProviderKey)
+                    Spacer()
+                    Text(store.hasProviderKey ? "Ключ сохранён в Keychain" : "Ключ не задан")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let error = store.lastSecretError {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+
+                Text("Ключ хранится только в системном Keychain — не в настройках приложения, не в файлах и не в логах. У каждого провайдера свой ключ: переключение на другого не стирает предыдущий.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                Label(keylessNote, systemImage: "checkmark.shield")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        // A key half-typed for one provider must never be saved to another.
+        .onChange(of: store.providerSelection.presetID) { providerKeyDraft = "" }
+    }
+
+    private var keylessNote: String {
+        store.providerPreset.transport == .cli
+            ? "Ключ не нужен: инструмент отвечает по той подписке, под которой он уже залогинен."
+            : "Ключ не нужен: локальный сервер работает без авторизации."
     }
 
     private func saveProviderKey() {

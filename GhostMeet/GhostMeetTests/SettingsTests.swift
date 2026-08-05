@@ -276,7 +276,11 @@ struct SettingsProviderKeyTests {
             #expect(store.setProviderKey(Self.secret))
             #expect(store.hasProviderKey)
             #expect(store.providerKey() == Self.secret)
-            #expect(secrets.contents[SecretAccount.llmProviderKey] == Self.secret)
+            // Аккаунт в Keychain — идентификатор провайдера, а не один общий.
+            #expect(
+                secrets.contents[SecretAccount.llmProviderKey(presetID: store.providerSelection.presetID)]
+                    == Self.secret
+            )
         }
     }
 
