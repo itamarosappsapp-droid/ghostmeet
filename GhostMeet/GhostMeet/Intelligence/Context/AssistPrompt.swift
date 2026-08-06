@@ -97,11 +97,25 @@ nonisolated enum AssistPrompt {
         Разговор:
         \(window.isEmpty ? emptyTranscriptPlaceholder : window)
         \(screenBlock)
-        Сделай то, что нужно мне прямо сейчас.
+        Сделай то, что нужно мне прямо сейчас: если это разговор — напиши моими словами, что мне сейчас говорить; если на экране задача — реши её.
         """
     }
 
     /// Verbatim from docs/GhostMeet-Prompts.md §1.
+    ///
+    /// **The register fix landed here too, and not out of symmetry.** The user's
+    /// complaint came with answers from both genres: the model addressed him
+    /// («Используйте Hash Map») and dropped the pronunciation brackets in both.
+    /// The frame, the pronunciation rule and the closing one-line contract are
+    /// therefore the same shared fragments the short genre uses — see
+    /// `PromptFragment.voice` and `BriefPrompt.systemRules` for what each
+    /// construct is defending against, since all of it is written for a loose
+    /// instruction-follower (gpt-4o) rather than for the tool it was trialled on.
+    ///
+    /// One thing is genre-specific: **code is the exception to being said out
+    /// loud.** This genre answers a screen task with a fenced block, and a
+    /// bracket with a Russian pronunciation inside an identifier would be
+    /// garbage — the rule says so where the code rule is, not as a footnote.
     ///
     /// Note the language rule: the answer follows the language of the
     /// conversation and of the task on screen. Russian is never forced — the
@@ -113,16 +127,21 @@ nonisolated enum AssistPrompt {
 
     Пользователь нажал хоткей развёрнутого разбора: тема незнакома ему целиком, и одной недостающей строки не хватит. Посмотри на скриншот (если есть) и разговор, реши, что нужно ему ПРЯМО СЕЙЧАС, и выдай это без преамбулы.
 
+    \(PromptFragment.voice)
+
+    \(PromptFragment.pronunciation)
+
     Правила:
-    - Если на экране задача (код, алгоритм, тест, форма) — кратко подход, затем готовое решение (код в fenced block), затем time/space complexity. Язык кода — как на экране, иначе Python.
-    - Если это разговор — разбери текущий вопрос собеседника так, чтобы пользователь мог говорить по написанному от первого лица: суть, затем опора — примеры, цифры, компромиссы.
-    - Не обращайся к собеседнику, не предлагай что-то обсудить, не задавай встречных вопросов и не предлагай несколько вариантов на выбор: пользователь произносит написанное вслух, а не выбирает из него.
+    - Если на экране задача (код, алгоритм, тест, форма) — кратко подход, затем готовое решение (код в fenced block), затем time/space complexity. Язык кода — как на экране, иначе Python. Код — единственное, что не произносят вслух: внутри блока кода ни первого лица, ни скобок с произношением не нужно.
+    - Если это разговор — разбери текущий вопрос собеседника словами пользователя, от первого лица, чтобы пользователь говорил по написанному: суть, затем опора — примеры, цифры, компромиссы.
+    - Ни одного слова в адрес собеседника: ни «используйте», «вы можете», «вам стоит», ни встречных вопросов, ни «давайте обсудим», ни нескольких вариантов на выбор — выбрать по дороге пользователь не сможет, он читает подряд. Исключение одно: собеседник сам спросил, есть ли вопросы, — тогда вопрос и есть ответ, и берётся он из заготовок.
+    - Ни одного факта о пользователе, которого нет в контексте: ни компании, ни проекта, ни срока, ни цифры о нём самом, ни суммы. Выдуманное он произнесёт вслух как своё и не переживёт уточняющий вопрос. Про сами заготовки и про то, чего в контексте нет, не пиши ни слова: это служебное, а не речь.
     - Будь плотным и уверенным: длиннее короткого жанра, но без воды и без пересказа вопроса.
-    - Не описывай скриншот («я вижу на экране…»). Не используй кавычки вокруг реплики «что сказать».
-    - Не выводи служебные или системные XML-теги.
-    - \(PromptFragment.pronunciation)
+    - Не описывай скриншот («я вижу на экране…»). Не используй кавычки вокруг реплики «что сказать». Не выводи служебные или системные XML-теги.
     - Язык ответа — язык разговора / задачи на экране (обычно русский или английский).
 
     \(PromptFragment.questionKinds)
+
+    **Главное, ещё раз: разговорную часть ответа пользователь через секунду скажет вслух своим голосом. Первое лицо, живые глаголы, у каждого термина латиницей — скобка с произношением, и ни одного факта о нём, которого нет в контексте.**
     """
 }

@@ -95,6 +95,13 @@ nonisolated enum BriefPrompt {
     /// an empty heading reads to the model as "the screen is blank", which is a
     /// different and usually wrong statement about a screen that simply could
     /// not be grabbed.
+    ///
+    /// The last line used to read «Дай то, чего мне не хватает» and worked
+    /// against the whole system prompt: «дай мне» names the user as the
+    /// addressee in the very last thing the model reads before generating, which
+    /// is an invitation back into the «вот вам инструкция» register the rules
+    /// above spend a paragraph forbidding. It now repeats the frame instead —
+    /// last position, same contract.
     static func user(transcript: [Turn], screenText: String = "") -> String {
         let window = TranscriptFormatter.format(transcript, limit: transcriptWindow)
         let screenBlock = PromptFragment.screenText(screenText).map { "\n\($0)\n" } ?? ""
@@ -102,11 +109,36 @@ nonisolated enum BriefPrompt {
         Разговор:
         \(window.isEmpty ? emptyTranscriptPlaceholder : window)
         \(screenBlock)
-        Я уже отвечаю. Дай то, чего мне не хватает.
+        Я уже говорю вслух. Продолжи за меня: напиши мою следующую фразу — ровно то, чего мне не хватает.
         """
     }
 
     /// Verbatim from docs/GhostMeet-Prompts.md §9.
+    ///
+    /// **The shape of this prompt is as load-bearing as its words, and it is
+    /// written for the model the user actually runs — gpt-4o through polza.ai,
+    /// which follows instructions much more loosely than the tool these rules
+    /// were trialled on.** Four properties are the fix for a live complaint and
+    /// must not be "simplified":
+    ///
+    /// 1. **The contract stands at the top and is repeated in one line at the
+    ///    bottom.** In a long system prompt both ends work and the middle is
+    ///    background; the old prompt put the register rule third in a list of ten
+    ///    and ended on reference data (the profile), so the strongest position
+    ///    was spent on facts. The closing line is a repetition on purpose — it
+    ///    costs a sentence and buys the rule that was ignored.
+    /// 2. **`PromptFragment.voice` comes before the list, not inside it.** What
+    ///    the text *is* has to be settled before any rule about how to write it.
+    /// 3. **The list is short.** Fourteen bullets of equal weight were fog; eight
+    ///    is what a weak follower still reads as rules.
+    /// 4. **No bullet says «если это уместно».** Every reservation of that shape
+    ///    was read as permission not to comply — that is precisely how the old
+    ///    pronunciation rule died.
+    ///
+    /// The «ни одного факта о пользователе» bullet is not a style rule: with an
+    /// empty `Контекст собеседования` every trialled variant invented a salary,
+    /// a deadline or a shipped-without-incident outcome, and the user would have
+    /// read it out loud as a fact about himself.
     ///
     /// Note the language rule: the answer follows the language of the
     /// conversation. Russian is never forced — the interview may well be in
@@ -118,18 +150,22 @@ nonisolated enum BriefPrompt {
 
     Пользователь нажал хоткей, потому что чего-то не знает, не помнит или сомневается. Он **уже начал отвечать вслух** и ждёт недостающего куска, а не ответа с начала.
 
-    Твой текст он произнесёт целиком, как свою реплику. Поэтому:
-    - Дай ровно то, чего не хватает: термин, цифру, различие, порядок из 2–4 пунктов. Не пересказывай вопрос и не начинай ответ заново.
-    - Максимум 3–4 строки или 4 пункта. Без преамбулы, без вывода, без «итак» и «надеюсь, это поможет».
-    - Пиши от первого лица, готовыми к произнесению фразами.
-    - Не обращайся к собеседнику, не предлагай что-то обсудить, не задавай встречных вопросов и не предлагай несколько вариантов на выбор: выбрать по дороге пользователь не сможет — он читает вслух.
-    - Не пиши, что чего-то не знаешь или что данных мало: скажи то, что можно сказать, короче.
-    - Если на экране код или задача — дай недостающую строку, имя метода или оценку сложности, а не разбор целиком.
-    - Не описывай скриншот («я вижу на экране…»). Не используй кавычки вокруг реплики.
-    - Не выводи служебные или системные XML-теги.
-    - \(PromptFragment.pronunciation)
-    - Язык ответа — язык разговора (обычно русский или английский).
+    \(PromptFragment.voice)
+
+    \(PromptFragment.pronunciation)
+
+    Говорит он коротко — он в середине собственной фразы:
+    - Дай ровно то, чего не хватает: термин, цифру, различие, порядок из 2–4 шагов. Не пересказывай вопрос и не начинай ответ заново.
+    - Максимум 3–4 строки или 4 пункта, и это потолок, а не цель. Абзацы пустой строкой не разделяй. Без преамбулы, без вывода, без заголовков «Подход:», «Решение:», без «итак» и «надеюсь, это поможет».
+    - Пункты — только там, где он и вслух перечислял бы по пальцам; каждый пункт тогда целая произносимая фраза, а не строка из справочника.
+    - Ни одного слова в адрес собеседника: ни «используйте», «вы можете», «вам стоит», ни встречных вопросов, ни «давайте обсудим», ни нескольких вариантов на выбор — выбрать по дороге он не сможет, он читает подряд. Исключение одно: собеседник сам спросил, есть ли вопросы, — тогда вопрос и есть ответ, и берётся он из заготовок.
+    - Ни одного факта о пользователе, которого нет в контексте: ни компании, ни проекта, ни срока, ни цифры о нём самом, ни суммы. Выдуманное он произнесёт вслух как своё и не переживёт уточняющий вопрос.
+    - Чего-то не хватает — скажи короче то, что можно сказать. «Я не знаю», «данных мало», «сложно сказать» он вслух не произнесёт. Про заготовки и про то, чего нет в контексте, тоже молчи: это служебное, а не речь.
+    - Если на экране код или задача — дай недостающую строку, имя метода или оценку сложности, а не разбор целиком. Не описывай скриншот («я вижу на экране…»), не бери реплику в кавычки, не выводи служебные или системные XML-теги.
+    - Язык ответа — язык разговора. Разговор по-русски — скобки с произношением обязательны; разговор по-английски — термины идут как есть.
 
     \(PromptFragment.questionKinds)
+
+    **Главное, ещё раз: ты пишешь фразу, которую пользователь через секунду скажет вслух своим голосом. Первое лицо, живые глаголы, 3–4 строки, у каждого термина латиницей — скобка с произношением, и ни одного факта о нём, которого нет в контексте.**
     """
 }

@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-The MVP pipeline runs end to end: both channels are captured, turns are cut on pauses, speech is recognised locally into a live transcript — and a suggestion is generated when the user presses a chord, never on its own. **537 tests** across 76 suites (Swift Testing, target `GhostMeetTests`).
+The MVP pipeline runs end to end: both channels are captured, turns are cut on pauses, speech is recognised locally into a live transcript — and a suggestion is generated when the user presses a chord, never on its own. **545 tests** across 76 suites (Swift Testing, target `GhostMeetTests`).
 
 Done: project skeleton and test target, microphone capture with VPIO, turn segmentation, WhisperKit recognition with model selection, the overlay window, the `Them` channel (both backends, SCK by default), settings with per-provider keys, the full provider router (OpenAI-compatible family, Gemini, CLI tools) with streaming, screenshot and OCR on every request, the press-driven suggestion lifecycle (a new press supersedes the answer in flight), two genres of suggestion plus `Ask` and `Solve on screen`, global hotkeys and per-channel indicators, several named profiles with one selected per call and filled in either by hand or from a resume, the `Контекст собеседования` beside them, the readiness strip in the overlay header, and markup in the suggestion card.
 
@@ -178,7 +178,9 @@ The planned Swift file layout (`App/`, `UI/`, `Audio/`, `Speech/`, `Intelligence
 
 Modes that exist: the two genres of suggestion (**коротко** ⌥⌘A and **подробно** ⌥⌘E), `Ask`, `Solve on screen`. Spec'd but unbuilt: Follow-up, Recap, and the background Summarizer. **The authoritative prompt texts live in [docs/GhostMeet-Prompts.md](docs/GhostMeet-Prompts.md); read it before touching prompt-building code, and update it in the same change if a prompt shifts** — the two must match word for word, and a test compares the assembled string against the literal from that document.
 
-Text shared by both genres (the question kinds, the pronunciation rule) lives in `PromptFragment` and is substituted into each: two literals that must stay identical would drift on the first edit.
+Text shared by both genres lives in `PromptFragment` and is substituted into each — `voice` (the register frame plus a «не так / а так» pair), `pronunciation`, `questionKinds`, `channels`: two literals that must stay identical would drift on the first edit.
+
+**The register frame is load-bearing and was measured, not guessed.** A live run showed the model writing *to* the user («Используйте Hash Map», «это позволит вам») instead of *for* them, and skipping the pronunciation brackets on everything it judged ordinary — three of fourteen terms got one. What fixed it was showing rather than forbidding: the frame states that the output is the user's own next sentence, a wrong/right pair demonstrates the register, and every escape hatch («только там, где произношение неочевидно») was deleted. Keep the pair, the opening frame and the closing repeat — they are there because the prompt is read by whatever model the user picked, and the weakest of them obeys examples but routes around bans.
 
 Cross-cutting rules from that file that are easy to get wrong:
 

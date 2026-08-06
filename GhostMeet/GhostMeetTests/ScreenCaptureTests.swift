@@ -70,7 +70,7 @@ struct ScreenCaptureTests {
 
         let prompt = call.provider.requests.first?.userPrompt ?? ""
         #expect(!prompt.contains(BriefPrompt.screenTextHeading), "пустой заголовок читается как «экран чист»")
-        #expect(prompt.contains("Я уже отвечаю. Дай то, чего мне не хватает."))
+        #expect(prompt.contains("Я уже говорю вслух. Продолжи за меня: напиши мою следующую фразу — ровно то, чего мне не хватает."))
     }
 
     // MARK: - Сбой захвата
