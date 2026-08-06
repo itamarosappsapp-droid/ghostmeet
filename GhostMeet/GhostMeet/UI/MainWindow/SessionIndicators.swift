@@ -65,11 +65,31 @@ struct SessionIndicators: Equatable, Sendable {
 
     var all: [Indicator] { [you, them, model] }
 
+    /// What to spell out in the window while a press is being prepared, or `nil`
+    /// when there is nothing to say.
+    ///
+    /// A dot is not enough here, and this is the one place where that is worth a
+    /// separate property. Between the press and the first token the app closes
+    /// the open turn, waits for its words and takes a screenshot — up to
+    /// `SessionEngine.recognitionBudget` in the worst case — while the user is on
+    /// camera, looking at the interviewer, with a 420-point translucent window in
+    /// the corner. If nothing visible changes, they conclude the chord missed and
+    /// press again; the second press supersedes the first and starts the wait
+    /// over, so the attempt to fix it exactly doubles it. ADR-0008 names that
+    /// mistake as the expensive one.
+    ///
+    /// Only `.waiting` earns the block. A failure already arrives as a card in
+    /// the feed, and saying it twice would be noise rather than emphasis.
+    var preparationNotice: String? {
+        model.state == .waiting ? model.detail : nil
+    }
+
     static func make(
         isListening: Bool,
         failure: SessionController.Failure?,
         recognition: SpeechModelPhase,
         themStatus: ThemCaptureStatus,
+        isPreparingAnswer: Bool = false,
         isGenerating: Bool,
         suggestionFailure: String?
     ) -> SessionIndicators {
@@ -78,6 +98,7 @@ struct SessionIndicators: Equatable, Sendable {
             them: themIndicator(isListening: isListening, status: themStatus),
             model: modelIndicator(
                 isListening: isListening,
+                isPreparingAnswer: isPreparingAnswer,
                 isGenerating: isGenerating,
                 suggestionFailure: suggestionFailure
             )
@@ -146,8 +167,17 @@ struct SessionIndicators: Equatable, Sendable {
     /// The model. `думает` lives here, and so does a request that came back
     /// empty — the suggestion feed shows the same reason, the dot is what makes
     /// it visible when the feed has scrolled.
+    ///
+    /// Preparation gets a state of its own rather than being folded into
+    /// `думает`. It is the gap ADR-0008 accepts as the price of pressing — the
+    /// tail of the question being recognised, the screen being grabbed — and it
+    /// is the one second in which the user is most likely to decide the chord did
+    /// not register and press again, throwing away the answer they are waiting
+    /// for. Calling it «пишет» when nothing is being written would be a lie by a
+    /// second, and this is the second that matters.
     private static func modelIndicator(
         isListening: Bool,
+        isPreparingAnswer: Bool,
         isGenerating: Bool,
         suggestionFailure: String?
     ) -> Indicator {
@@ -159,6 +189,14 @@ struct SessionIndicators: Equatable, Sendable {
                 detail: "Модель пишет подсказку."
             )
         }
+        if isPreparingAnswer {
+            return Indicator(
+                id: "model",
+                name: "Модель",
+                state: .waiting,
+                detail: "Нажатие принято — дозакрываю вопрос и снимаю экран."
+            )
+        }
         if let suggestionFailure {
             return Indicator(id: "model", name: "Модель", state: .failed, detail: suggestionFailure)
         }
@@ -166,9 +204,7 @@ struct SessionIndicators: Equatable, Sendable {
             id: "model",
             name: "Модель",
             state: .idle,
-            detail: isListening
-                ? "Ждём реплику собеседника — подсказка запустится сама."
-                : "Подсказка появляется сама после реплики собеседника."
+            detail: "Подсказка приходит по нажатию хоткея — сама она не запускается."
         )
     }
 }

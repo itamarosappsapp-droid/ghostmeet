@@ -5,7 +5,10 @@
 
 import SwiftUI
 
-/// Where the user re-binds the four global chords.
+/// Where the user re-binds the global chords.
+///
+/// Deliberately without a number: it has been wrong twice already — the list
+/// went from four to five to seven, and the sentence stayed.
 ///
 /// It lives in the overlay and not in the settings window because the overlay is
 /// the window that is on screen when a chord turns out to be wrong — and because

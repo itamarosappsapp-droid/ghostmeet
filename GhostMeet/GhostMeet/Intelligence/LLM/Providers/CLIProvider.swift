@@ -20,8 +20,8 @@ import Foundation
 /// 1. **Streaming means reading stdout as it appears** — not waiting for the
 ///    process to exit and yielding the answer in one lump. There is no protocol
 ///    to parse; the fragments are simply the writes the tool makes.
-/// 2. **Cancellation kills the process.** A new `Them` turn cancels the
-///    in-flight suggestion (ADR-0003): the consumer stops, the stream
+/// 2. **Cancellation kills the process.** A new press cancels the
+///    in-flight suggestion (ADR-0008): the consumer stops, the stream
 ///    terminates, the work task is cancelled, and `CLIProcess.terminate` signals
 ///    the tool. An orphan left writing an answer nobody reads is a leak and a
 ///    bill against the user's subscription.

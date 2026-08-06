@@ -10,14 +10,19 @@ import os
 /// The one orchestrator of a call.
 ///
 /// It takes in frames of both channels, closes turns, keeps the transcript and
-/// later drives suggestions. Everything outside of it is seen through protocols
+/// answers when the user asks. Everything outside of it is seen through protocols
 /// only — `AudioSource`, `SpeechRecognizer` — so the engine never learns whether
 /// audio comes from the microphone or from a process tap, nor which engine
 /// recognises it (ADR-0001).
 ///
+/// **A suggestion starts on a press and on nothing else** (ADR-0008). A closed
+/// `Them` turn is recognised, lands in the transcript, and that is all it does:
+/// the candidate knows most of the answers, and asking the model about every
+/// question costs tokens, buries the feed and drowns the model in context.
+///
 /// Time comes from an injected clock, which makes the engine the single seam of
 /// the app: a test feeds frames, moves the clock and checks which turns showed
-/// up in the transcript, without waiting in real time.
+/// up in the transcript and what reached the model, without waiting in real time.
 @MainActor
 @Observable
 final class SessionEngine {
@@ -35,6 +40,15 @@ final class SessionEngine {
     /// window and nowhere else.
     private(set) var lastError: String?
 
+    /// A press has been taken and the request is being put together: the tail of
+    /// the question is being recognised and the screen is being grabbed.
+    ///
+    /// It exists because that gap is real and audible — a second, sometimes two,
+    /// between the chord and the first token (ADR-0008). Without a sign that the
+    /// press landed, the user presses again in the middle of it, and the second
+    /// press throws away the answer the first one was about to produce.
+    private(set) var isPreparingAnswer = false
+
     /// Segmentation thresholds. Changing them takes effect on the turns that
     /// start afterwards.
     var config: TurnSegmentationConfig {
@@ -42,6 +56,15 @@ final class SessionEngine {
             for segmenter in segmenters.values { segmenter.config = config }
         }
     }
+
+    /// How long a press waits for the words that are still being recognised.
+    ///
+    /// A constant beside its use rather than a setting: there is nothing here for
+    /// the user to decide, and the only thing they would notice is the failure
+    /// mode. Generous on purpose — recognising the tail of a question takes a
+    /// fraction of this — because the budget is not a target, it is the answer to
+    /// "recognition wedged, and the request must still go out".
+    static let recognitionBudget: TimeInterval = 4
 
     private let clock: SessionClock
 
@@ -66,8 +89,7 @@ final class SessionEngine {
     /// Recording grant, and a test has to be able to say what the screen showed.
     private let capturer: any ScreenCapturer
     /// The model behind the suggestions. Optional because the app has to be
-    /// usable — capture, transcript, settings — before a provider is configured;
-    /// with none, a closed `Them` turn simply asks for nothing.
+    /// usable — capture, transcript, settings — before a provider is configured.
     ///
     /// Settable for the same reason `config` is: picking another provider in
     /// settings has to take effect on the next suggestion, not at the next
@@ -75,38 +97,45 @@ final class SessionEngine {
     /// one already streaming. `SessionController.followProviderSelection(of:)`
     /// is what keeps it equal to the settings screen.
     @ObservationIgnored var provider: (any LLMProvider)?
+    /// The prompt layer, behind its one seam: which prompt a press uses, how much
+    /// of the conversation it reads and how many tokens it may spend are all
+    /// decided there.
     private let composer: any SuggestionComposer
-    /// The prompts of the modes the user starts by hand — `Ask` and `Solve on
-    /// screen`. Separate from `composer` because it answers a different question:
-    /// that one is handed the conversation, this one is handed what the user
-    /// asked for.
-    private let manualComposer: any ManualComposer
     private let segmenters: [Channel: TurnSegmenter]
     private var pauseWatchdog: Timer?
     /// Recognition running per closed turn. Each task removes its own entry when
     /// it is done, so what is left here is what is genuinely still being worked
-    /// on — the newest `Them` turn waits on exactly that before its request is
-    /// composed.
+    /// on — a press waits on exactly that before its request is composed.
     private var recognitionInFlight: [Turn.ID: Task<Void, Never>] = [:]
-    /// The generation currently running. A newer `Them` turn cancels it, which
-    /// is what stops the model answering a question that is no longer being
-    /// asked (ADR-0003); it also lets whoever needs the finished suggestion wait
-    /// for it.
+    /// The answer currently being prepared or generated. A newer press cancels
+    /// it, which is what stops two answers streaming into one feed; it also lets
+    /// whoever needs the finished suggestion wait for it.
+    ///
+    /// One slot for two phases in turn: first the task that waits for the words
+    /// and the screen, then the task that reads the stream. Either way exactly
+    /// one thing is cancellable at a time, which is what `supersedeAnswerInFlight()`
+    /// relies on.
     private var suggestionTask: Task<Void, Never>?
-    /// The screenshot being taken for that generation.
+    /// The screenshot being taken for that answer.
     ///
-    /// Held apart from the generation because it starts earlier — the instant
-    /// the turn closed, beside recognition — and has to be cancellable on its
-    /// own. A superseded turn otherwise pays for a frame and a few hundred
-    /// milliseconds of text recognition nobody will read.
+    /// Held apart from the generation because it starts earlier — the instant the
+    /// user pressed, beside the wait for recognition — and has to be cancellable
+    /// on its own. A superseded press otherwise pays for a frame and a few
+    /// hundred milliseconds of text recognition nobody will read.
+    ///
+    /// Dropped as soon as its result has been handed on. A finished task holds on
+    /// to its value, and that value is a JPEG of the whole screen — keeping the
+    /// reference until the next press would leave a picture of whatever the user
+    /// was looking at lying in memory for the rest of the call, in an app whose
+    /// whole premise is that nothing about the screen is kept.
     private var screenTask: Task<ScreenContext, Never>?
-    /// The `Them` turn the loop is currently answering.
+
+    /// Whether a screenshot taken for a press is still being held.
     ///
-    /// The single answer to "is this work still current?": recognition is never
-    /// cancelled — the words belong in the transcript whatever happens — so the
-    /// pipeline hanging off it has to be able to tell that a newer question
-    /// arrived while it was running, and stop of its own accord.
-    private var answering: Turn.ID?
+    /// Nothing in the app reads this; it is here so that the release above is
+    /// checkable, which for a leak of exactly one object is the only way to check
+    /// it at all.
+    var isHoldingScreenshot: Bool { screenTask != nil }
 
     init(
         sources: [AudioSource] = [],
@@ -115,7 +144,6 @@ final class SessionEngine {
         // Defaulted in the body rather than here: the composer is main-actor
         // isolated, and a default argument is evaluated outside any actor.
         composer: (any SuggestionComposer)? = nil,
-        manualComposer: (any ManualComposer)? = nil,
         capturer: (any ScreenCapturer)? = nil,
         clock: SessionClock = SystemClock(),
         config: TurnSegmentationConfig = .default
@@ -123,8 +151,7 @@ final class SessionEngine {
         self.sources = sources
         self.recognizer = recognizer
         self.provider = provider
-        self.composer = composer ?? AssistSuggestionComposer()
-        self.manualComposer = manualComposer ?? ManualPromptComposer()
+        self.composer = composer ?? PromptComposer()
         self.capturer = capturer ?? ScreenCaptureService()
         self.clock = clock
         self.config = config
@@ -163,6 +190,10 @@ final class SessionEngine {
     }
 
     /// Stops listening and closes the turn that was in progress.
+    ///
+    /// Closing here only writes words into the transcript. It asks for nothing:
+    /// stopping is not a request for a suggestion, and since ADR-0008 a closed
+    /// turn starts nothing by itself anyway.
     func stop() {
         guard isListening else { return }
         sources.forEach { $0.stop() }
@@ -205,18 +236,17 @@ final class SessionEngine {
         for task in running.values { await task.value }
     }
 
-    /// Waits for the suggestion a closed `Them` turn may have started, including
-    /// the recognition that precedes it.
+    /// Waits for the suggestion a press started, preparation included.
     ///
     /// Same reason as `waitForRecognition()`: generation runs beside the call so
     /// that nothing waits on the model, and a test has to be able to reach the
     /// end of it without sleeping.
     func waitForSuggestion() async {
         await waitForRecognition()
-        // Waiting once is not enough for a request the user made by hand: that
-        // one waits for the screenshot in a task of its own and only then hands
-        // the slot to the task that reads the stream. Following the slot until it
-        // stops changing covers both shapes with one rule.
+        // Waiting once is not enough: a press waits for the words and the screen
+        // in a task of its own and only then hands the slot to the task that
+        // reads the stream. Following the slot until it stops changing covers
+        // both phases with one rule.
         var awaited: Task<Void, Never>?
         while let task = suggestionTask, task != awaited {
             awaited = task
@@ -233,96 +263,47 @@ final class SessionEngine {
         transcript.append(turn)
         recognize(
             turn: turn.id,
-            on: turn.channel,
             audio: SpeechAudio(samples: captured.samples, sampleRate: captured.sampleRate)
         )
     }
 
-    private func recognize(turn id: Turn.ID, on channel: Channel, audio: SpeechAudio) {
+    /// Starts recognising one closed turn, and nothing else.
+    ///
+    /// Recognition is **never cancelled** — not by a press, not by the next turn.
+    /// The words belong in the transcript whatever happens to the answer, and the
+    /// request the user is waiting for is composed from them.
+    private func recognize(turn id: Turn.ID, audio: SpeechAudio) {
         let recognizer = recognizer
-
-        // A closed `Them` turn is the question now, and that is settled here — at
-        // the instant the turn closed, before recognition has produced a single
-        // word of it. Everything the previous question set going stops, and the
-        // screenshot for this one starts.
-        //
-        // A closed `You` turn does none of it. The user is answering, and the
-        // suggestion on screen is their crib sheet: it keeps growing and keeps
-        // standing until the interlocutor speaks again (ADR-0003).
-        let screen: Task<ScreenContext, Never>? = channel == .them
-            ? startAnswering(turn: id)
-            : nil
-
-        // Everything still being recognised when this turn closed. An
-        // interlocutor who paused mid-sentence leaves two turns behind, and a
-        // request composed before the first of them landed would answer half a
-        // question. The snapshot is taken before this turn's own task joins the
-        // list, so no task can ever wait on itself.
-        let earlier = Array(recognitionInFlight.values)
-
         let task = Task { [weak self] in
             defer { self?.recognitionInFlight[id] = nil }
 
             // A failed pass leaves the turn in place with no text: losing a turn
             // would be worse than showing one without words.
             let text = (try? await recognizer.transcribe(audio)) ?? ""
-            // Recognition is never cancelled, not even by the turn that
-            // supersedes this one: those words still belong in the transcript,
-            // and the request answering the newer turn is built from them. What
-            // gets cancelled is the answer, never the record of what was said.
             self?.apply(text: text, to: id)
-
-            // The rest of the pipeline runs only for `Them`, and only while it is
-            // still the current question.
-            guard let screen else { return }
-            for pending in earlier { await pending.value }
-            guard self?.answering == id else { return }
-            let context = await screen.value
-            guard self?.answering == id else { return }
-            self?.startSuggestion(promptedBy: id, screen: context)
         }
         recognitionInFlight[id] = task
     }
 
-    /// Takes a newly closed `Them` turn as the question being answered, and
-    /// starts the screenshot that will travel with it.
-    ///
-    /// The screen is grabbed beside recognition rather than after it. Two
-    /// reasons, and both matter: this is the screen the question was asked about,
-    /// and the proactive loop exists for speed — running it in parallel puts the
-    /// screenshot and the OCR inside the time speech recognition takes instead of
-    /// adding them in front of the first token.
-    ///
-    /// - Returns: the capture in progress, or nil when there is no provider to
-    ///   answer with — the app stays usable before one is configured, and a
-    ///   closed turn then simply asks for nothing.
-    private func startAnswering(turn id: Turn.ID) -> Task<ScreenContext, Never>? {
-        supersedeAnswerInFlight()
-        answering = id
-        guard provider != nil else { return nil }
-        let task = Task { [capturer] in await capturer.capture() }
-        screenTask = task
-        return task
-    }
-
-    /// Stops everything the previous question set going.
+    /// Stops everything the previous press set going.
     ///
     /// Three things at once, because all three are work on a question nobody is
-    /// asking any more. The generation: cancellation reaches the socket in every
-    /// provider, so a superseded request stops costing time and money instead of
-    /// being counted to the end in the background. The screenshot being taken for
-    /// it: a frame plus a few hundred milliseconds of text recognition that
-    /// nothing will read. And the suggestion itself, which settles as
-    /// `superseded`.
+    /// waiting for any more. The generation: cancellation reaches the socket in
+    /// every provider, so a superseded request stops costing time and money
+    /// instead of being counted to the end in the background. The screenshot
+    /// being taken for it: a frame plus a few hundred milliseconds of text
+    /// recognition that nothing will read. And the suggestion itself, which
+    /// settles as `superseded`.
     ///
     /// What was already written stays on screen. The feed is history, and half an
     /// answer the user is in the middle of reading is not rubbish — it simply
-    /// stops growing (ADR-0003).
+    /// stops growing.
     private func supersedeAnswerInFlight() {
         suggestionTask?.cancel()
         suggestionTask = nil
         screenTask?.cancel()
         screenTask = nil
+        isPreparingAnswer = false
         for index in suggestions.indices where !suggestions[index].isSettled {
             suggestions[index].state = .superseded
         }
@@ -333,7 +314,20 @@ final class SessionEngine {
         transcript[index].text = text
     }
 
-    // MARK: - Ручные режимы
+    // MARK: - Что просит пользователь
+
+    /// Жанр «коротко» — the default press.
+    ///
+    /// The user is already speaking and is missing one thing: a term, a number,
+    /// three bullets, a distinction (ADR-0008).
+    func suggestBriefly() {
+        startAnswer(.brief)
+    }
+
+    /// Жанр «подробно» — the full answer, for a subject that is unfamiliar whole.
+    func suggestInDetail() {
+        startAnswer(.detailed)
+    }
 
     /// Answers a question the user typed — mode `Ask`.
     ///
@@ -344,7 +338,7 @@ final class SessionEngine {
     func ask(_ question: String) {
         let text = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        startManualAnswer(.question(text))
+        startAnswer(.question(text))
     }
 
     /// Solves the task on the screen — mode `Solve on screen`.
@@ -352,64 +346,135 @@ final class SessionEngine {
     /// Needs no session: the screen is the whole input, so this works before
     /// listening has ever been started and keeps working after it is stopped.
     func solveOnScreen() {
-        startManualAnswer(.screenTask)
+        startAnswer(.screenTask)
     }
 
-    /// Takes what the user asked for as the question being answered, and starts
-    /// the screenshot that will travel with it.
+    /// Takes a press: closes the question, grabs the screen, waits for the words,
+    /// then generates.
     ///
-    /// Deliberately the very same machinery as a closed `Them` turn, down to the
-    /// order: supersede first, then capture, then generate. A manual request is
-    /// not a side channel — it is subject to the same rule, so the next `Them`
-    /// turn cancels it exactly as it cancels an automatic answer (ADR-0003).
+    /// The order is the design, and each step is there for a reason ADR-0008
+    /// spells out.
     ///
-    /// `answering` is cleared rather than set: the automatic pipeline still
-    /// hanging off the last `Them` turn checks that identifier before it starts
-    /// generating, so clearing it is what stops an automatic answer landing on
-    /// top of the one the user just asked for. The two never run side by side —
-    /// two answers streaming into one feed would leave the user reading whichever
+    /// *Supersede first.* A second press replaces the answer of the first — two
+    /// generations writing into one feed would leave the user reading whichever
     /// won the race.
-    private func startManualAnswer(_ ask: ManualAsk) {
+    ///
+    /// *Then close what is open on **both** channels, whatever its length.* The
+    /// user presses the instant the interlocutor stops talking, which is before
+    /// the pause threshold has run; without this the last phrase of the question
+    /// does not exist yet. `You` is closed for the mirror-image reason: by the
+    /// time anyone presses they are already answering out loud, and the жанр
+    /// «коротко» is built on that — the prompt says «я уже отвечаю, дай
+    /// недостающее», and a model that cannot see what was already said starts the
+    /// answer from the beginning, which is the failure the genre exists to
+    /// prevent.
+    ///
+    /// *Then start the screenshot, and wait for recognition beside it.* Both cost
+    /// hundreds of milliseconds, and run in parallel they cost the larger of the
+    /// two rather than the sum. The second recognition pass this now adds is part
+    /// of that parallel wait and not after it: `recognize(turn:audio:)` starts a
+    /// task per turn, so two closed turns are two passes running at once.
+    private func startAnswer(_ ask: SuggestionAsk) {
+        // Before the provider is even looked at: the press says the interlocutor
+        // has finished, and that is a fact about the conversation. A `Реплика`
+        // does not depend on there being a model to answer it — an unconfigured
+        // provider must not cost the user the tail of a question.
+        closeOpenTurns()
+
         guard provider != nil else {
             reportNothingToAnswerWith()
             return
         }
         supersedeAnswerInFlight()
-        answering = nil
 
         let screen = Task { [capturer] in await capturer.capture() }
         screenTask = screen
 
-        // The wait for the screen is the cancellable task for now; the moment
-        // there is something to stream, `stream(_:from:promptedBy:screen:)`
-        // takes the slot over. Either way one task is cancellable at a time,
-        // which is what `supersedeAnswerInFlight()` relies on.
-        suggestionTask = Task { [weak self] in
+        // Taken after the forced close, so the tail of the question is part of
+        // what is waited for. `Solve on screen` waits for nothing: it reads no
+        // conversation, and waiting would be latency spent on words its prompt
+        // will never see.
+        let pending = ask.readsTranscript ? Array(recognitionInFlight.values) : []
+        isPreparingAnswer = true
+
+        suggestionTask = Task { [weak self, clock] in
+            if !pending.isEmpty {
+                // Over budget the request goes out **without** the late words
+                // rather than not at all. They are not lost: recognition is never
+                // cancelled, so the text still lands in the transcript — one
+                // suggestion late, and without asking for anything of its own.
+                await clock.wait(upTo: Self.recognitionBudget) {
+                    for task in pending { await task.value }
+                }
+            }
             let context = await screen.value
             guard !Task.isCancelled else { return }
-            self?.startManualSuggestion(ask, screen: context)
+            self?.releaseScreen(screen)
+            self?.startSuggestion(ask, screen: context)
         }
     }
 
-    private func startManualSuggestion(_ ask: ManualAsk, screen: ScreenContext) {
+    /// Lets go of a screenshot that has been used, unless a newer press has
+    /// already put its own there.
+    ///
+    /// Compared by identity rather than blindly cleared: a press superseded
+    /// between `await screen.value` returning and this line running would
+    /// otherwise drop the *next* press's capture and leave nothing to cancel.
+    private func releaseScreen(_ used: Task<ScreenContext, Never>) {
+        guard screenTask == used else { return }
+        screenTask = nil
+    }
+
+    /// Closes whatever either channel left open, so that the end of the question
+    /// and the beginning of the answer both exist before the request is composed.
+    ///
+    /// `Them` first, then `You`, and the order is the reading order of the
+    /// prompt: the question, then the half-sentence the user is in the middle of.
+    /// Both are `Реплики` of their own channel — nothing is merged here, and
+    /// `TranscriptFormatter` is what puts the user's interrupted sentence back
+    /// together at prompt time, as it does for a question broken by a pause.
+    ///
+    /// The words go into the transcript unconditionally — even if the answer they
+    /// were closed for is superseded a moment later. A `Реплика` is the record of
+    /// what was said; it does not depend on what became of the suggestion.
+    private func closeOpenTurns() {
+        for channel in [Channel.them, .you] {
+            guard let captured = segmenters[channel]?.closeIgnoringMinimum() else { continue }
+            append(captured)
+        }
+    }
+
+    private func startSuggestion(_ ask: SuggestionAsk, screen: ScreenContext) {
+        isPreparingAnswer = false
         guard let provider else { return }
-        let request = manualComposer.compose(
+        let request = composer.compose(
             ask,
             transcript: transcript,
             screen: screen,
             accepting: provider.capabilities
         )
-        stream(request, from: provider, promptedBy: nil, screen: screen)
+        stream(request, from: provider, screen: screen, notice: notice(for: ask))
+    }
+
+    /// What the user has to be told about the answer that is starting.
+    ///
+    /// One case: a press that reads the conversation while nothing is being
+    /// captured. The request is **not** blocked — `Solve on screen` without
+    /// listening is the ordinary way to use it, and refusing mid-interview would
+    /// be worse than a thin answer — but an answer built from an empty transcript
+    /// is indistinguishable from an answer built from the question, and without a
+    /// word the user blames the model for it. `Solve on screen` gets no notice:
+    /// it reads no conversation, so listening changes nothing about its answer.
+    private func notice(for ask: SuggestionAsk) -> String? {
+        guard ask.readsTranscript, !isListening else { return nil }
+        return "Прослушивание выключено — отвечаю только по экрану."
     }
 
     /// Says in the feed that there is no model to answer with.
     ///
-    /// Only the manual modes report this. The automatic loop stays silent
-    /// without a provider — nobody asked it for anything, and a card per closed
-    /// `Them` turn would bury the window in identical complaints. A button the
-    /// user pressed is the opposite case: silence there reads as a broken app.
-    ///
-    /// Inside the window and nowhere else, like every other failure (ADR-0004).
+    /// Reported because the user pressed: silence in answer to a press reads as a
+    /// broken app. Inside the window and nowhere else, like every other failure
+    /// (ADR-0004).
     private func reportNothingToAnswerWith() {
         suggestions.append(
             Suggestion(state: .failed(LLMFailure.missingKey.message), startedAt: Date())
@@ -425,35 +490,23 @@ final class SessionEngine {
     /// written instead of a spinner followed by a wall of text.
     ///
     /// Reading the stream is a task of its own — the one `supersedeAnswerInFlight()`
-    /// cancels — rather than a continuation of the recognition that led here. That
-    /// split is the whole of ticket 08: a superseded turn must lose its answer and
-    /// keep its words.
-    private func startSuggestion(promptedBy turn: Turn.ID?, screen: ScreenContext) {
-        guard let provider else { return }
-        let request = composer.compose(
-            transcript: transcript,
-            screen: screen,
-            accepting: provider.capabilities
-        )
-        stream(request, from: provider, promptedBy: turn, screen: screen)
-    }
-
-    /// Starts the generation itself, whichever mode assembled the request.
+    /// cancels — rather than a continuation of the preparation that led here. That
+    /// split is what lets a superseded press lose its answer and keep its words.
     ///
     /// The engine gets no further than this into what was asked: which prompt,
     /// how much of the conversation and how many tokens were all decided by the
-    /// composer, and from here on a question the user typed and a question the
-    /// interlocutor asked are the same object with the same lifecycle.
+    /// composer, and from here on the four things the user can press for are one
+    /// object with one lifecycle.
     private func stream(
         _ request: SuggestionRequest,
         from provider: any LLMProvider,
-        promptedBy turn: Turn.ID?,
-        screen: ScreenContext
+        screen: ScreenContext,
+        notice: String?
     ) {
         // A screen that could not be grabbed is reported and then stepped over:
-        // the request goes out without a picture rather than not at all
-        // (ADR-0003). The reason lives in the window and nowhere else — a system
-        // banner would be drawn over the shared screen (ADR-0004).
+        // the request goes out without a picture rather than not at all. The
+        // reason lives in the window and nowhere else — a system banner would be
+        // drawn over the shared screen (ADR-0004).
         //
         // Cleared on a capture that worked, so a one-off failure does not leave
         // a sentence on screen for the rest of the call. Nothing else writes
@@ -461,12 +514,12 @@ final class SessionEngine {
         // `start()` and there is no session to report into.
         lastError = screen.failure
 
-        let suggestion = Suggestion(promptedBy: turn, startedAt: Date())
+        let suggestion = Suggestion(notice: notice, startedAt: Date())
         suggestions.append(suggestion)
 
-        // The request leaves before the task that reads it is scheduled: this is
-        // the moment the interlocutor stopped talking, and every hop between
-        // here and the first token is latency the user waits through.
+        // The request leaves before the task that reads it is scheduled: the user
+        // is waiting with their mouth open, and every hop between here and the
+        // first token is latency they sit through.
         let stream = provider.stream(request)
 
         let id = suggestion.id
@@ -479,7 +532,7 @@ final class SessionEngine {
                 guard !Task.isCancelled else { return }
                 self?.settle(id, as: .complete)
             } catch is CancellationError {
-                // Superseded by a newer turn; whoever cancelled owns the state.
+                // Superseded by a newer press; whoever cancelled owns the state.
                 return
             } catch {
                 // Reported in the feed and nowhere else. A system notification

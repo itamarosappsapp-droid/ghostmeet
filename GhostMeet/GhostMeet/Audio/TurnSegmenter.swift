@@ -9,7 +9,15 @@ import Foundation
 ///
 /// Every value here is configuration with a working default, never a constant
 /// buried in the segmenter: the pause threshold in particular is the knob that
-/// trades suggestion latency against cutting the speaker off mid-sentence.
+/// decides how the interlocutor's speech is laid out in the transcript.
+///
+/// **It is no longer part of any latency budget.** While a closed `Them` turn
+/// fired a suggestion by itself, every extra 100 ms of threshold was 100 ms
+/// before the first token, and 800 ms was the compromise that made. Since
+/// ADR-0008 a suggestion starts on a press, and the press force-closes the open
+/// turn regardless — so the threshold buys nothing back by being small and costs
+/// a question chopped into fragments. Do not lower it back on latency grounds:
+/// there is no latency here to trade.
 nonisolated struct TurnSegmentationConfig: Equatable, Sendable {
     /// How much silence closes the current turn.
     var pauseThreshold: TimeInterval
@@ -26,8 +34,18 @@ nonisolated struct TurnSegmentationConfig: Equatable, Sendable {
     /// stalled source cannot keep a turn open forever.
     var pauseCheckInterval: TimeInterval
 
+    /// - Parameter pauseThreshold: 1.5 s, and the number is an argument rather
+    ///   than a taste. Hesitation pauses inside a sentence run 0.2–1.0 s and
+    ///   clause-boundary pauses 1.0–1.5 s, so this covers both bands whole and an
+    ///   ordinary interview question stops arriving in three pieces. It is 6.7×
+    ///   below `safetyFlushInterval`, so silence still does the cutting rather
+    ///   than the timer. The rarer case — an interviewer holding a two-second
+    ///   silence mid-question — is caught afterwards by
+    ///   `TranscriptFormatter.mergeGap`, which is the division of labour: the
+    ///   threshold handles the common pause at the source, the merge handles the
+    ///   long one at prompt time without touching what was stored.
     init(
-        pauseThreshold: TimeInterval = 0.8,
+        pauseThreshold: TimeInterval = 1.5,
         minimumTurnDuration: TimeInterval = 0.6,
         silenceGateRMS: Float = 0.01,
         safetyFlushInterval: TimeInterval = 10,
@@ -40,7 +58,8 @@ nonisolated struct TurnSegmentationConfig: Equatable, Sendable {
         self.pauseCheckInterval = pauseCheckInterval
     }
 
-    /// Defaults from the spec: ~800 ms pause, 0.5–0.8 s minimum length, ~10 s flush.
+    /// Working defaults: 1.5 s pause, 0.6 s minimum length, 10 s flush. The spec's
+    /// original ~800 ms pause was a latency compromise and expired with ADR-0008.
     static let `default` = TurnSegmentationConfig()
 }
 
@@ -77,9 +96,6 @@ nonisolated final class TurnSegmenter {
         self.config = config
     }
 
-    /// Whether speech is currently being collected.
-    var hasOpenTurn: Bool { startedAt != nil }
-
     /// Takes one captured frame.
     ///
     /// The clock is read when the frame is handed over, so the frame covers
@@ -109,13 +125,32 @@ nonisolated final class TurnSegmenter {
         let pauseIsLongEnough = silenceSoFar >= config.pauseThreshold
         let speechRanTooLong = lengthSoFar >= config.safetyFlushInterval
         guard pauseIsLongEnough || speechRanTooLong else { return nil }
-        return close()
+        return close(keepingShortSpeech: false)
     }
 
     /// Closes whatever is open, e.g. when the user stops listening.
-    func flush() -> CapturedTurn? { close() }
+    ///
+    /// The minimum length still applies: nobody asked for this turn, so a cough
+    /// caught at the moment capture stopped is still a cough.
+    func flush() -> CapturedTurn? { close(keepingShortSpeech: false) }
 
-    private func close() -> CapturedTurn? {
+    /// Closes whatever is open **whatever its length** — for the moment the user
+    /// asks for a suggestion.
+    ///
+    /// The minimum is deliberately skipped, and this is the whole reason the
+    /// method exists. The user presses the instant the interlocutor stops
+    /// talking, so what is open is the tail of the question — «…с Postgres?»,
+    /// about 0.4 s, comfortably under `minimumTurnDuration` — and, on the other
+    /// channel, the first words of their own answer, which are shorter still.
+    /// Through the ordinary path that tail is not merely delayed, it is
+    /// destroyed: `close()` empties the buffer before it decides to return nil.
+    ///
+    /// The filter is bypassed, not removed. Everything that closes by itself — a
+    /// pause, the safety flush, stopping capture — keeps it, or a cough would
+    /// become a `Реплика` again.
+    func closeIgnoringMinimum() -> CapturedTurn? { close(keepingShortSpeech: true) }
+
+    private func close(keepingShortSpeech: Bool) -> CapturedTurn? {
         guard let startedAt else { return nil }
         let duration = lastVoiceEndedAt - startedAt
         let captured = CapturedTurn(
@@ -128,6 +163,6 @@ nonisolated final class TurnSegmenter {
         self.startedAt = nil
         samples.removeAll(keepingCapacity: true)
         // Too short to be speech: dropped, and recognition is never called for it.
-        return duration >= config.minimumTurnDuration ? captured : nil
+        return keepingShortSpeech || duration >= config.minimumTurnDuration ? captured : nil
     }
 }

@@ -24,8 +24,12 @@ struct HotkeyActions {
     /// `startWhenRecognitionIsReady()` for precisely this caller.
     var startListening: () -> Void = {}
     var stopListening: () -> Void = {}
-    /// Mode `Solve on screen`, started by hand. Needs no session — the screen is
-    /// the whole input — so this fires whether or not capture is running.
+    /// Жанр «коротко» — the press the whole app is built around (ADR-0008).
+    var suggestBriefly: () -> Void = {}
+    /// Жанр «подробно».
+    var suggestInDetail: () -> Void = {}
+    /// Mode `Solve on screen`. Needs no session — the screen is the whole input —
+    /// so this fires whether or not capture is running.
     var solveOnScreen: () -> Void = {}
     var clearContext: () -> Void = {}
 
@@ -34,6 +38,8 @@ struct HotkeyActions {
         case .toggleVisibility: toggleVisibility
         case .startListening: startListening
         case .stopListening: stopListening
+        case .suggestBriefly: suggestBriefly
+        case .suggestInDetail: suggestInDetail
         case .solveOnScreen: solveOnScreen
         case .clearContext: clearContext
         }
@@ -130,12 +136,25 @@ final class HotkeyCenter {
 
     /// Why a binding is not working, or `nil` when it is.
     ///
-    /// The two reasons read differently because the user's next step differs: a
-    /// chord another application owns is fixed by picking another one, a chord
-    /// that is not a chord at all (a preferences file edited by hand) is fixed by
-    /// adding a modifier.
+    /// The reasons read differently because the user's next step differs: a chord
+    /// another application owns is fixed by picking another one, a chord that is
+    /// not a chord at all (a preferences file edited by hand) is fixed by adding a
+    /// modifier, and no chord at all is fixed by choosing one.
+    ///
+    /// **An action with no chord counts as a problem**, and that is the case this
+    /// method used to be silent about. Since ADR-0008 a press is the only path to
+    /// the model — there is no button in the overlay for either genre — so an
+    /// action nothing is bound to is not a preference, it is a feature that does
+    /// not exist, and the user finds out mid-interview. Even the deliberate case
+    /// is stated: the picker already shows «Выключено», so this adds what the
+    /// picker cannot — that the action will not run.
     func problem(with action: HotkeyAction) -> String? {
-        guard unavailable.contains(action), let hotkey = bindings[action] else { return nil }
+        guard let hotkey = bindings[action] else {
+            return bindings.isCleared(action)
+                ? "Комбинация для «\(action.title)» снята — действие не сработает, пока вы не выберете новую."
+                : "Действию «\(action.title)» не досталось комбинации — выберите её в списке, иначе оно не сработает."
+        }
+        guard unavailable.contains(action) else { return nil }
         guard hotkey.isValid else {
             return "Комбинация \(hotkey.displayString) не годится для глобального хоткея: нужен хотя бы один из ⌘, ⌥, ⌃."
         }

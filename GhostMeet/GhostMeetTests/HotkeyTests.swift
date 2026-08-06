@@ -70,6 +70,7 @@ private final class RecordingComposer: SuggestionComposer {
     private(set) var seen: [[Turn]] = []
 
     func compose(
+        _ ask: SuggestionAsk,
         transcript: [Turn],
         screen: ScreenContext,
         accepting capabilities: ProviderCapabilities
@@ -583,7 +584,7 @@ struct ClearContextTests {
         await call.controller.waitForStart()
 
         call.someoneSpeaks(for: 1.2, on: .them)
-        call.silenceLasts(1.2, on: .them)
+        call.silenceLasts(1.6, on: .them)
         await call.engine.waitForRecognition()
         #expect(call.controller.transcript.count == 1)
 
@@ -602,12 +603,12 @@ struct ClearContextTests {
         await call.controller.waitForStart()
 
         call.someoneSpeaks(for: 1.2, on: .them)
-        call.silenceLasts(1.2, on: .them)
+        call.silenceLasts(1.6, on: .them)
         await call.engine.waitForRecognition()
         call.controller.clearContext()
 
         call.someoneSpeaks(for: 1.2, on: .you)
-        call.silenceLasts(1.2, on: .you)
+        call.silenceLasts(1.6, on: .you)
         await call.engine.waitForRecognition()
 
         #expect(call.controller.transcript.count == 1)
@@ -627,6 +628,7 @@ struct ClearContextTests {
 
         context.forget(turns: [forgotten], suggestions: [])
         let request = composer.compose(
+            .brief,
             transcript: [forgotten, kept],
             screen: .none,
             accepting: .multimodal
@@ -679,6 +681,7 @@ struct SessionIndicatorTests {
         failure: SessionController.Failure? = nil,
         recognition: SpeechModelPhase = .ready,
         themStatus: ThemCaptureStatus = .idle,
+        isPreparingAnswer: Bool = false,
         isGenerating: Bool = false,
         suggestionFailure: String? = nil
     ) -> SessionIndicators {
@@ -687,6 +690,7 @@ struct SessionIndicatorTests {
             failure: failure,
             recognition: recognition,
             themStatus: themStatus,
+            isPreparingAnswer: isPreparingAnswer,
             isGenerating: isGenerating,
             suggestionFailure: suggestionFailure
         )

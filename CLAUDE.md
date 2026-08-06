@@ -8,11 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-The MVP pipeline runs end to end: both channels are captured, turns are cut on pauses, speech is recognised locally, a closed `Them` turn starts a suggestion on its own, and the user can ask for one themselves. **421 tests** across 64 suites (Swift Testing, target `GhostMeetTests`).
+The MVP pipeline runs end to end: both channels are captured, turns are cut on pauses, speech is recognised locally into a live transcript — and a suggestion is generated when the user presses a chord, never on its own. **537 tests** across 76 suites (Swift Testing, target `GhostMeetTests`).
 
-Done: project skeleton and test target, microphone capture with VPIO, turn segmentation, WhisperKit recognition with model selection, the overlay window, the `Them` channel (both backends, SCK by default), settings with per-provider keys, the proactive `Assist` loop with a streaming Claude provider, the full provider router (OpenAI-compatible family, Gemini, CLI tools), screenshot and OCR on every request, the suggestion lifecycle (a newer `Them` turn supersedes the answer in flight), the manual `Ask` / `Solve on screen` modes under those same cancellation rules, global hotkeys and per-channel indicators, several named profiles with one selected per call and filled in either by hand or from a resume, and the readiness strip in the overlay header — the `Активный профиль` (switched from a menu there), the provider with its model, and the `Приложение-источник`.
+Done: project skeleton and test target, microphone capture with VPIO, turn segmentation, WhisperKit recognition with model selection, the overlay window, the `Them` channel (both backends, SCK by default), settings with per-provider keys, the full provider router (OpenAI-compatible family, Gemini, CLI tools) with streaming, screenshot and OCR on every request, the press-driven suggestion lifecycle (a new press supersedes the answer in flight), two genres of suggestion plus `Ask` and `Solve on screen`, global hotkeys and per-channel indicators, several named profiles with one selected per call and filled in either by hand or from a resume, the `Контекст собеседования` beside them, the readiness strip in the overlay header, and markup in the suggestion card.
 
-Every ticket of the interview MVP is implemented; several are `ready-for-human` and awaiting review. Tickets live in `.scratch/interview-mvp/`. What is left beyond them is the v1.0 list in [docs/GhostMeet.md](docs/GhostMeet.md) — the background Summarizer above all, which is why the `{{#if summary}}` block of every prompt is still unbuilt.
+Two ticket sets are done and awaiting human review: `.scratch/interview-mvp/` (the original MVP) and `.scratch/hotkey-first/` (the switch to hotkey-triggered suggestions and three ideas taken from cue — question kinds inside the prompt, interview context above the profile, markup in the card). What is left is the v1.0 list in [docs/GhostMeet.md](docs/GhostMeet.md). The background Summarizer is **deliberately not** on the critical path any more: a whole interview is ~10k tokens and fits in one request, so `{{#if summary}}` stays present and empty until a use case longer than an interview appears.
 
 The audio investigation is over and its scaffolding is gone: no diagnostics object, no level probes, no environment flags of our own. What survived it are the fixes it found — `MicCaptureService.firstChannel`, `ProcessTap.DeliveryFormat`, `PCMMixdown`, the mic tap installed with `format: nil` — and their regression tests. Logging is lifecycle-only now: capture start and failure (`SessionEngine`), `Them` channel status (`SessionController`), recognition model phase (`SpeechModelStatus`). Nothing per frame, nothing anybody said. Keep it that way — a per-frame log in this app writes the conversation to disk.
 
@@ -122,14 +122,14 @@ The app is signed with a **stable Apple Development identity** (personal team). 
 
 A macOS always-on-top overlay that assists during video calls (Meet, Telemost, Zoom, Teams). It listens to two audio channels, transcribes locally, and answers via pluggable LLMs — while staying invisible to screen sharing.
 
-**The MVP targets one scenario: a technical interview where the user is the candidate.** That is the tightest requirement set — latency is critical, `Solve on screen` is the primary mode rather than a bonus, and reaching for a hotkey on camera is conspicuous. Other scenarios are relaxations of it and are not designed for separately.
+**The MVP targets one scenario: a technical interview where the user is the candidate.** That is the tightest requirement set — latency is critical and `Solve on screen` is a primary mode rather than a bonus. The scenario also settled the loop: a candidate knows most answers, so suggestions are asked for, not delivered (ADR-0008). The old worry that reaching for a chord on camera is conspicuous weighs less than it looked — in a technical interview the hands are already on the keyboard. Other scenarios are relaxations of this one and are not designed for separately.
 
 ## Where decisions live
 
 Design decisions from the grilling session are recorded, not just implied by the code — read them before reopening a settled question:
 
 - [CONTEXT.md](CONTEXT.md) — the glossary. `You`, `Them`, `Реплика`, `Подсказка`, `Профиль` have precise definitions; use those words and don't drift to synonyms.
-- [docs/adr/](docs/adr/) — [0001](docs/adr/0001-swappable-backends-behind-protocols.md) swappable backends, [0002](docs/adr/0002-stt-engine-choice.md) STT engine choice, [0003](docs/adr/0003-proactive-suggestion-loop.md) the proactive suggestion loop, [0004](docs/adr/0004-invisibility-scope.md) the limits of invisibility.
+- [docs/adr/](docs/adr/) — [0001](docs/adr/0001-swappable-backends-behind-protocols.md) swappable backends, [0002](docs/adr/0002-stt-engine-choice.md) STT engine choice, [0004](docs/adr/0004-invisibility-scope.md) the limits of invisibility, [0006](docs/adr/0006-screencapturekit-default-for-them.md) SCK as the default `Them` backend, [0008](docs/adr/0008-hotkey-triggered-suggestions.md) suggestions on a hotkey. Two are superseded and stay in the directory for the reasoning they carry: [0003](docs/adr/0003-proactive-suggestion-loop.md) (the proactive loop, by 0008) and [0005](docs/adr/0005-vpio-and-process-tap-cannot-coexist.md) (by [0007](docs/adr/0007-vpio-and-process-tap-do-coexist.md)).
 
 The spec in `docs/` has been reconciled with these; where an older reference project (cue) disagrees, the ADRs win.
 
@@ -156,31 +156,38 @@ The resume file itself is never stored — not on disk, not in `UserDefaults`, n
 ### Audio → answer pipeline
 
 1. **Capture** — mic via AVAudioEngine + VPIO; `Them` via Process Tap → Aggregate Device → IOProc (or SCK)
-2. **Buffer + gate** — separate `you`/`them` PCM queues; a turn closes after ~800 ms of silence, with a minimum length (~0.5–0.8 s), an RMS silence gate, and a ~10 s forced flush for pause-less monologues. The fixed 3–4 s flush cue uses is deliberately **not** used — half the window would be pure added latency
+2. **Buffer + gate** — separate `you`/`them` PCM queues; a turn closes after **1.5 s** of silence, with a minimum length (~0.6 s), an RMS silence gate, and a ~10 s forced flush for pause-less monologues. The threshold used to be 800 ms because every extra 100 ms was 100 ms before the first token; with ADR-0008 it is no longer part of any latency budget, and the higher value is what stops a long question arriving in three pieces. **Do not lower it back on latency grounds**
 3. **STT** — WhisperKit per channel, independently
 4. **Transcript** — append `Turn { channel, text, timestamp }`
-5. **Context** — sliding window of the last ~10–15 turns; older turns are compressed by the background Summarizer and injected into the system prompt, along with the user's `Профиль` (experience, stack, role)
+5. **Context** — the whole call, capped at `TranscriptFormatter.characterBudget` (40 000 characters ≈ 13–16k tokens, over an hour of speech); adjacent turns of one channel less than `mergeGap` (3 s) apart are merged into one line, so a question split by a pause stops reading as two people. Overflow drops the oldest lines and says so. The background Summarizer is **not built** — at ~10k tokens for a whole interview it would compress what already fits — so `{{#if summary}}` is present in every prompt and always empty. Alongside goes the user's `Профиль` and the `Контекст собеседования`
 6. **LLM** — one `LLMProvider` protocol behind an `LLMRouter`; cloud, local-HTTP, and CLI providers all conform to it. Streaming everywhere except the Summarizer.
 
-**The loop is proactive** ([ADR-0003](docs/adr/0003-proactive-suggestion-loop.md)): closing a `Them` turn fires steps 3–6 automatically, with a screenshot attached to *every* request. A new `Them` turn cancels the in-flight generation and restarts; `You` speech cancels nothing — the suggestion stays on screen as a crib until `Them` speaks again. Hotkeys are a secondary path, not the main one.
+**Nothing reaches the model until the user presses** ([ADR-0008](docs/adr/0008-hotkey-triggered-suggestions.md), which supersedes [ADR-0003](docs/adr/0003-proactive-suggestion-loop.md)). Capture, segmentation and recognition run on their own — steps 1–4 above fill the transcript continuously — but steps 5–6 happen only on a chord. A screenshot still travels with *every* request; it is taken at the press.
 
-Cancellation there is narrower than it looks, and the boundary is load-bearing: a superseded turn loses its *answer* — the stream, the screenshot being taken for it, the right to start a suggestion at all — and keeps its *words*. Speech recognition is never cancelled, because the interlocutor who paused mid-sentence left two turns behind and the new request is composed from both; cancel it and the prompt gets an empty `Them` turn instead of the first half of the question. What stops the stale branch is `SessionEngine.answering`, not `Task.cancel()`.
+The reason is in the scenario, not in the code: a candidate knows most of the answers. Help is wanted when they don't know, don't remember, or aren't sure — a minority of questions. Answering the rest cost tokens, filled the feed and buried the model in crumbs. Read ADR-0008 before reopening this; it also records what the decision does *not* rule out.
 
-The manual modes (`Ask`, `Solve on screen`) are the same loop entered from the other end and obey the same rules — `SessionEngine.ask(_:)` and `solveOnScreen()` supersede first, then capture, then stream. They are not a side channel: the next `Them` turn cancels a manual answer exactly as it cancels an automatic one, and a manual request clears `answering` so that the two never generate into the feed side by side.
+**A press has to close the question first.** The user presses the moment the interviewer stops — before the pause threshold has elapsed, so the last phrase is not in the transcript yet. `SessionEngine` therefore force-closes the open `Them` turn, waits for recognition under a budget, and only then composes. That path must bypass `minimumTurnDuration`: `TurnSegmenter.close()` clears `samples` *before* rejecting a short turn, so a plain flush destroys a 0.4 s tail — exactly the end of the question. Recognition runs beside the screenshot, never after it.
+
+Cancellation is narrower than it looks, and the boundary is load-bearing: a superseded request loses its *answer* — the stream, the screenshot being taken for it — and keeps its *words*. Speech recognition is never cancelled; those words belong in the transcript regardless of which answer survives. Only a new press supersedes anything. A `Them` turn no longer cancels anything at all, and `You` speech never did.
+
+Two genres share that path and differ only in size: **коротко** (⌥⌘A, ~512 tokens) is the default, because a user who presses is already speaking and needs the missing piece rather than an essay; **подробно** (⌥⌘E, 4k) is for a topic that is unfamiliar whole. `Solve on screen` is the third chord and reads no transcript at all.
 
 The planned Swift file layout (`App/`, `UI/`, `Audio/`, `Speech/`, `Intelligence/{Context,LLM,Screen}/`, `Input/`, `Settings/`, `Utilities/`) is in [docs/GhostMeet.md](docs/GhostMeet.md) — follow it when creating files rather than inventing a new structure.
 
 ## Modes and prompts
 
-Six user-facing modes — Assist, What should I say?, Follow-up, Recap, Ask, Solve on screen — plus a background Summarizer. **The authoritative prompt texts live in [docs/GhostMeet-Prompts.md](docs/GhostMeet-Prompts.md); read it before touching prompt-building code, and update it in the same change if a prompt shifts.**
+Modes that exist: the two genres of suggestion (**коротко** ⌥⌘A and **подробно** ⌥⌘E), `Ask`, `Solve on screen`. Spec'd but unbuilt: Follow-up, Recap, and the background Summarizer. **The authoritative prompt texts live in [docs/GhostMeet-Prompts.md](docs/GhostMeet-Prompts.md); read it before touching prompt-building code, and update it in the same change if a prompt shifts** — the two must match word for word, and a test compares the assembled string against the literal from that document.
+
+Text shared by both genres (the question kinds, the pronunciation rule) lives in `PromptFragment` and is substituted into each: two literals that must stay identical would drift on the first edit.
 
 Cross-cutting rules from that file that are easy to get wrong:
 
 - Never crash or bail on an empty transcript — substitute a placeholder like `(пусто)` and still answer, or, where the document's template guards the block with `{{#if transcript}}`, omit it entirely. Never send a bare heading: that reads to the model as "nothing was said", which is a different and usually wrong claim
 - Don't force Russian: response language follows the language of the Them/You turns or the user's question
-- Different modes read different transcript window sizes (12 / 14 / 20 / all / none at all for Solve) and different max-token budgets (256–512 for Say/Follow-up, 2k–4k for Ask/Solve/Assist)
-- Multimodal modes (Assist, Ask, Solve on screen) attach the screenshot to the *user* message; all three also pass the Vision-framework OCR text, which is the only thing a text-only provider ever learns about the screen
+- Every mode that reads the conversation now reads the same window — the whole call — because the sizes 12 / 14 / 20 were budgets for a Summarizer that does not exist. `Solve on screen` still reads none of it. Token budgets differ: ~512 for the short genre, 2k for `Ask`, 4k for the detailed genre and `Solve`
+- Every mode attaches the screenshot to the *user* message and also passes the Vision-framework OCR text, which is the only thing a text-only provider ever learns about the screen
 - The optional `resume_context` block at the end of that file is **not optional here** — it carries the user's `Профиль` and ships in the MVP. Without it the model suggests experience the user doesn't have, which is a worse failure than a slow answer. The one exception is `Solve on screen`, whose answer goes into an editor rather than into a sentence said out loud — see note 5 of the prompt document
+- **The suggestion is read aloud, and every prompt rule follows from that.** No addressing the interviewer, no "let's discuss which option fits", no counter-questions, no menu of options, no apologising for not knowing — all of it would be spoken. Naming the reason in the prompt matters more than listing the bans: told only "do not offer options", a model routes around it by the letter
 
 ## Permissions
 

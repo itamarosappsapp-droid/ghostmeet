@@ -20,7 +20,7 @@ struct OverlayWindowConfiguration {
     var collectionBehavior: NSWindow.CollectionBehavior
 
     /// `.none` keeps the window out of every screen capture: the user's screen
-    /// sharing and the screenshots GhostMeet takes for itself (ADR-0003).
+    /// sharing and the screenshots GhostMeet takes for itself (ADR-0004).
     var sharingType: NSWindow.SharingType
 
     /// `.nonactivatingPanel` is the part that keeps typing focus in the other app:

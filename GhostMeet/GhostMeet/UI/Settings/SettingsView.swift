@@ -45,11 +45,12 @@ struct SettingsView: View {
     var body: some View {
         // Each section is tagged with its own anchor so that a press on the
         // readiness strip lands on the control it named rather than at the top
-        // of a form seven sections long. `Form` on macOS lays every section out
-        // — none of this is lazy — so all seven anchors exist to be scrolled to.
+        // of a form eight sections long. `Form` on macOS lays every section out
+        // — none of this is lazy — so all eight anchors exist to be scrolled to.
         ScrollViewReader { proxy in
             Form {
                 profileSection.id(SettingsSection.profile)
+                interviewContextSection.id(SettingsSection.interviewContext)
                 captureBackendSection.id(SettingsSection.captureBackend)
                 sourceApplicationSection.id(SettingsSection.sourceApplication)
                 recognitionSection.id(SettingsSection.recognition)
@@ -150,6 +151,14 @@ struct SettingsView: View {
     /// because it is now four controls and a sheet rather than three fields.
     private var profileSection: some View {
         ProfileSectionView(store: store)
+    }
+
+    // MARK: - Interview context
+
+    /// What the user prepared for *this* interview — directly under the profile,
+    /// because that is the thing it has to be told apart from.
+    private var interviewContextSection: some View {
+        InterviewContextSectionView(store: store)
     }
 
     // MARK: - Source application
@@ -482,7 +491,7 @@ struct SettingsView: View {
                 range: TurnSegmentationConfig.pauseThresholdRange,
                 step: 0.05,
                 format: { "\(Int(($0 * 1000).rounded())) мс" },
-                hint: "Тишина такой длины закрывает реплику."
+                hint: "Тишина такой длины закрывает реплику. На скорость подсказки не влияет: запрос уходит по нажатию, а нажатие дозакрывает реплику само."
             )
             threshold(
                 title: "Минимальная длина реплики",

@@ -13,10 +13,10 @@ import Testing
 /// What the model is shown of the screen, and what happens when the screen
 /// cannot be shown at all.
 ///
-/// The screenshot is attached to *every* automatic request (ADR-0003), so the
-/// interesting cases are the ones where that rule meets something: a backend
-/// that cannot take an image, a capture that failed, a Retina display whose
-/// frame is too big to send.
+/// The screenshot is attached to *every* request and is taken at the moment the
+/// user presses (ADR-0008), so the interesting cases are the ones where that rule
+/// meets something: a backend that cannot take an image, a capture that failed, a
+/// Retina display whose frame is too big to send.
 @Suite("Снимок экрана и текст с него")
 @MainActor
 struct ScreenCaptureTests {
@@ -32,12 +32,13 @@ struct ScreenCaptureTests {
         )
 
         call.says(.them)
+        call.engine.suggestBriefly()
         await call.engine.waitForSuggestion()
 
         let request = call.provider.requests.first
         #expect(request?.screenshot == png, "снимок обязан дойти до модели, которая его понимает")
         #expect(request?.userPrompt.contains("func reverse(_ list: [Int]) -> [Int]") == true)
-        #expect(request?.userPrompt.contains(AssistPrompt.screenTextHeading) == true)
+        #expect(request?.userPrompt.contains(BriefPrompt.screenTextHeading) == true)
     }
 
     @Test("Провайдер картинок не принимает — снимка нет, а текст с экрана всё равно уходит")
@@ -48,6 +49,7 @@ struct ScreenCaptureTests {
         )
 
         call.says(.them)
+        call.engine.suggestBriefly()
         await call.engine.waitForSuggestion()
 
         let request = call.provider.requests.first
@@ -63,11 +65,12 @@ struct ScreenCaptureTests {
         let call = ScreenCall(capabilities: .multimodal, screen: .none)
 
         call.says(.them)
+        call.engine.suggestBriefly()
         await call.engine.waitForSuggestion()
 
         let prompt = call.provider.requests.first?.userPrompt ?? ""
-        #expect(!prompt.contains(AssistPrompt.screenTextHeading), "пустой заголовок читается как «экран чист»")
-        #expect(prompt.contains("Сделай то, что нужно мне прямо сейчас."))
+        #expect(!prompt.contains(BriefPrompt.screenTextHeading), "пустой заголовок читается как «экран чист»")
+        #expect(prompt.contains("Я уже отвечаю. Дай то, чего мне не хватает."))
     }
 
     // MARK: - Сбой захвата
@@ -81,6 +84,7 @@ struct ScreenCaptureTests {
         )
 
         call.says(.them)
+        call.engine.suggestBriefly()
         await call.engine.waitForSuggestion()
 
         #expect(call.engine.suggestions.count == 1, "сбой захвата экрана не отменяет подсказку")
@@ -98,6 +102,7 @@ struct ScreenCaptureTests {
         )
 
         call.says(.them)
+        call.engine.suggestBriefly()
         await call.engine.waitForSuggestion()
 
         #expect(call.engine.lastError == "Нет разрешения на запись экрана")
@@ -109,11 +114,13 @@ struct ScreenCaptureTests {
         let call = ScreenCall(capabilities: .multimodal, capturer: capturer)
 
         call.says(.them)
+        call.engine.suggestBriefly()
         await call.engine.waitForSuggestion()
         #expect(call.engine.lastError != nil)
 
         capturer.result = ScreenContext(image: Data([0x89]), text: "готово")
         call.says(.them)
+        call.engine.suggestBriefly()
         await call.engine.waitForSuggestion()
 
         #expect(call.engine.lastError == nil, "старая жалоба не должна висеть до конца звонка")
@@ -121,7 +128,7 @@ struct ScreenCaptureTests {
 
     // MARK: - Задержка
 
-    @Test("Снимок начинается, не дожидаясь распознавания реплики")
+    @Test("Снимок начинается сразу по нажатию, не дожидаясь распознавания реплики")
     func screenIsGrabbedBesideRecognition() async {
         // Распознавание держится до отмашки: если снимок ждёт его конца, к этому
         // моменту захват ещё не начался бы.
@@ -130,6 +137,7 @@ struct ScreenCaptureTests {
         let call = ScreenCall(capabilities: .multimodal, recognizer: recognizer, capturer: capturer)
 
         call.says(.them)
+        call.engine.suggestBriefly()
         #expect(
             await capturer.startedCapturing(within: .seconds(2)),
             "захват экрана обязан идти параллельно распознаванию, а не после него"
@@ -312,7 +320,7 @@ private struct ScreenCall {
         self.engine = SessionEngine(
             recognizer: recognizer,
             provider: provider,
-            composer: AssistSuggestionComposer { .empty },
+            composer: PromptComposer(profile: { .empty }),
             capturer: capturer ?? ScreenCapturerStub(screen),
             clock: clock
         )
@@ -320,7 +328,7 @@ private struct ScreenCall {
 
     func says(_ channel: Channel, for seconds: TimeInterval = 1.2) {
         feed(seconds: seconds) { AudioFrames.speech(channel: channel, duration: frameLength) }
-        feed(seconds: 0.9) { AudioFrames.silence(channel: channel, duration: frameLength) }
+        feed(seconds: TurnSegmentationConfig.default.pauseThreshold + 0.2) { AudioFrames.silence(channel: channel, duration: frameLength) }
     }
 
     private func feed(seconds: TimeInterval, frame: () -> AudioFrame) {

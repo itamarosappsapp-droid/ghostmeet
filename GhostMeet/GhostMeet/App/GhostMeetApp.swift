@@ -68,12 +68,13 @@ final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
         recognition: recognition
     )
 
-    /// The five global chords and what they do.
+    /// The global chords and what they do.
     ///
     /// Built on Carbon's `RegisterEventHotKey`, which needs **no permission** —
     /// see `CarbonHotkeyRegistry`. The app already asks for four grants; a fifth
-    /// (Accessibility, which `NSEvent`'s global monitor requires) for a secondary
-    /// control path is not a trade worth making.
+    /// (Accessibility, which `NSEvent`'s global monitor requires) is not a trade
+    /// worth making — the more so now that the chords are the only way a request
+    /// ever reaches the model (ADR-0008).
     private lazy var hotkeys = HotkeyCenter(store: settings)
 
     private lazy var overlayWindowController = OverlayWindowController(
@@ -130,12 +131,13 @@ final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
         overlayWindowController.show()
     }
 
-    /// Connects the five chords to the things they drive, and registers them
-    /// with the system.
+    /// Connects the chords to the things they drive, and registers them with the
+    /// system.
     ///
     /// The composition root is the only place that knows all three participants:
-    /// the window (panic), the session (listening) and the conversation
-    /// (clearing). `HotkeyCenter` deliberately knows none of them.
+    /// the window (panic), the session (listening, and every request to the
+    /// model) and the conversation (clearing). `HotkeyCenter` deliberately knows
+    /// none of them.
     private func wireHotkeys() {
         hotkeys.actions = HotkeyActions(
             // Hiding is only the window. Capture keeps running — see
@@ -148,8 +150,13 @@ final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
             // would cost the user the opening question of the interview.
             startListening: { [weak self] in self?.session.startWhenRecognitionIsReady() },
             stopListening: { [weak self] in self?.session.stop() },
-            // The one manual mode that is wanted with the hands on someone
-            // else's editor rather than on this window — see `HotkeyAction`.
+            // The two genres: the only way a question ever reaches the model
+            // (ADR-0008). Short is the default press — the user is already
+            // answering and is missing one thing.
+            suggestBriefly: { [weak self] in self?.session.suggestBriefly() },
+            suggestInDetail: { [weak self] in self?.session.suggestInDetail() },
+            // Wanted with the hands on someone else's editor rather than on this
+            // window — see `HotkeyAction`.
             solveOnScreen: { [weak self] in self?.session.solveOnScreen() },
             clearContext: { [weak self] in self?.session.clearContext() }
         )

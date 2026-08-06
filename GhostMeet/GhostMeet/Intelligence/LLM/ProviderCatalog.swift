@@ -24,8 +24,8 @@ nonisolated enum ProviderTransport: String, Codable, CaseIterable, Sendable {
 
 /// What a provider can actually accept.
 ///
-/// This exists because of one hard fact: the automatic loop attaches a
-/// screenshot to **every** request (ADR-0003), and most local models and every
+/// This exists because of one hard fact: every press attaches a
+/// screenshot to **every** request (ADR-0008), and most local models and every
 /// CLI cannot take an image. Sending one anyway is not a degraded answer, it is
 /// a failed request. So the provider declares what it accepts and the layer
 /// building the request drops what it cannot use.

@@ -32,7 +32,7 @@ nonisolated enum WhisperModel: String, Codable, CaseIterable, Sendable, Identifi
     /// What a fresh install starts with.
     ///
     /// The compressed turbo build of large-v3 is the only entry that is both
-    /// fast enough for the proactive loop and good enough at Russian to be worth
+    /// fast enough to answer inside a sentence and good enough at Russian to be worth
     /// showing to the user. The smaller variants are kept for machines and
     /// networks that cannot take it, not as a recommendation.
     static let `default`: WhisperModel = .largeV3Turbo

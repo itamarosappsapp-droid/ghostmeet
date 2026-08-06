@@ -51,6 +51,7 @@ struct ContentView: View {
             recognitionNotice
             failureNotice
             themNotice
+            preparationNotice
             suggestions
             Divider().opacity(0.4)
             askBar
@@ -110,6 +111,7 @@ struct ContentView: View {
             failure: session.failure,
             recognition: recognition.phase,
             themStatus: session.themStatus,
+            isPreparingAnswer: session.isPreparingAnswer,
             isGenerating: session.isGenerating,
             suggestionFailure: session.lastSuggestionFailure
         )
@@ -274,6 +276,29 @@ struct ContentView: View {
     ///
     /// Inside the window and nowhere else, like every other report here: a
     /// notification banner would be drawn over the shared screen (ADR-0004).
+    /// «Нажатие принято» — said in words, right above the feed the answer will
+    /// land in.
+    ///
+    /// Placed here and not in the header on purpose: after pressing, the user
+    /// looks where the answer appears. The header dot changes colour too, but a
+    /// 7×7 point dot and a tooltip are not something anyone catches out of the
+    /// corner of an eye while looking at an interviewer — see
+    /// `SessionIndicators.preparationNotice` for what that costs.
+    @ViewBuilder
+    private var preparationNotice: some View {
+        if let notice = indicators.preparationNotice {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(notice)
+                    .font(.system(size: 11))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+        }
+    }
+
     @ViewBuilder
     private var themNotice: some View {
         let them = indicators.them
@@ -338,8 +363,8 @@ struct ContentView: View {
     ///
     /// Directly under the feed, because that is where its answer lands. It stays
     /// visible mid-call rather than hiding behind a disclosure: the whole point
-    /// of the two modes is being reachable in one motion at the moment the
-    /// automatic loop has answered the wrong thing.
+    /// of the two modes is being reachable in one motion at the moment a chord
+    /// has answered the wrong thing.
     private var askBar: some View {
         AskBarView(session: session)
     }

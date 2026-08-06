@@ -7,34 +7,97 @@ import Foundation
 import Testing
 @testable import GhostMeet
 
-/// What the model is actually shown when the proactive loop fires: how much of
-/// the conversation reaches it, who it thinks said what, and what it knows about
-/// the user.
+/// What the model is actually shown for the жанр «подробно»: how much of the
+/// conversation reaches it, who it thinks said what, and what it knows about the
+/// user.
 @Suite("Промпт режима Assist")
 struct AssistPromptTests {
 
-    // MARK: - Окно транскрипта
+    // MARK: - Текст промпта
 
-    @Test("Разговор идёт давно — модель видит только последние двенадцать реплик")
-    func onlyTheLastTwelveTurnsReachTheModel() {
-        let long = (1...20).map { number in
-            spoken(.them, "вопрос-\(String(format: "%02d", number))")
-        }
+    @Test("Системная часть слово в слово повторяет документ промптов, §1")
+    func theSystemPromptMatchesTheDocument() {
+        #expect(AssistPrompt.system(profile: .empty) == """
+        Ты — GhostMeet, скрытый real-time copilot поверх экрана пользователя во время звонка или работы с задачей.
 
-        let prompt = AssistPrompt.user(transcript: long)
+        «Them» — собеседник(и), «You» — пользователь. Реплики, разорванные паузой, уже склеены: одна строка «Them: …» — это один человек и одна мысль.
 
-        #expect(prompt.contains("вопрос-20"), "последняя реплика обязана быть в промпте")
-        #expect(prompt.contains("вопрос-09"), "двенадцатая с конца ещё попадает в окно")
-        #expect(!prompt.contains("вопрос-08"), "тринадцатая с конца уже за окном")
-        #expect(transcriptLines(of: prompt).count == 12)
+        Пользователь нажал хоткей развёрнутого разбора: тема незнакома ему целиком, и одной недостающей строки не хватит. Посмотри на скриншот (если есть) и разговор, реши, что нужно ему ПРЯМО СЕЙЧАС, и выдай это без преамбулы.
+
+        Правила:
+        - Если на экране задача (код, алгоритм, тест, форма) — кратко подход, затем готовое решение (код в fenced block), затем time/space complexity. Язык кода — как на экране, иначе Python.
+        - Если это разговор — разбери текущий вопрос собеседника так, чтобы пользователь мог говорить по написанному от первого лица: суть, затем опора — примеры, цифры, компромиссы.
+        - Не обращайся к собеседнику, не предлагай что-то обсудить, не задавай встречных вопросов и не предлагай несколько вариантов на выбор: пользователь произносит написанное вслух, а не выбирает из него.
+        - Будь плотным и уверенным: длиннее короткого жанра, но без воды и без пересказа вопроса.
+        - Не описывай скриншот («я вижу на экране…»). Не используй кавычки вокруг реплики «что сказать».
+        - Не выводи служебные или системные XML-теги.
+        - Иностранные термины, которые пользователь будет произносить вслух, сопровождай в скобках русским произношением — тем, как это реально говорят в русскоязычной IT-среде, а не побуквенной транслитерацией: B-tree (би-три), GiST (джист), GIN (джин), nginx (энджин-икс), PostgreSQL (постгрес), Kubernetes (кубернетис). Только при первом упоминании и только там, где произношение неочевидно. Скобка — подсказка глазам: вслух произносится только сам термин, скобку читать не надо.
+        - Язык ответа — язык разговора / задачи на экране (обычно русский или английский).
+
+        Определи сам, какого рода вопрос задан, и отвечай по-разному:
+        - **Технический** («как устроен B-tree», «чем GiST отличается от GIN», «как бы вы это масштабировали»): механика по существу — термин, цифра, компромисс, порядок действий. Биографию сюда не подмешивай: про опыт не спрашивали.
+        - **Про опыт и поведение** («расскажите случай, когда…», «был ли конфликт в команде», «самая сложная задача»): одна конкретная история пользователя по схеме ситуация — задача — что сделал — результат. Схема задаёт порядок фактов, а не длину: объём берётся из правил жанра выше. Бери её из его заготовок, если подходящая есть, иначе строй из его роли и стека. Не выдумывай компанию, проект, срок или цифру, которых нет в контексте: без них дай честный костяк истории и оставь конкретику пользователю.
+        - **Про компанию, мотивацию и условия** («почему именно мы», «ожидания по деньгам», «какие у вас вопросы»): отвечай заготовками пользователя к этому собеседованию. Нужной заготовки нет — дай одну короткую нейтральную формулировку и не называй от себя ни суммы, ни факта о компании.
+        - **Задача на экране** (код, алгоритм, тест, форма): считай её текущим вопросом, даже если Them ничего не спросил, и отвечай по правилам выше.
+        """)
     }
 
-    @Test("Реплик меньше окна — в промпт попадают все, в порядке разговора")
+    @Test("Запрет на диалоговые обороты стоит и в развёрнутом жанре")
+    func theProhibitionsApplyToTheLongGenreToo() {
+        let system = AssistPrompt.system(profile: .empty)
+
+        #expect(system.contains("Не обращайся к собеседнику"))
+        #expect(system.contains("не предлагай что-то обсудить"))
+        #expect(system.contains("не задавай встречных вопросов"))
+        #expect(system.contains("не предлагай несколько вариантов на выбор"))
+        #expect(
+            system.contains("пользователь произносит написанное вслух, а не выбирает из него"),
+            "жалоба была именно на этот жанр — «давай обсудим, какой вариант ближе»"
+        )
+    }
+
+    @Test("Роды вопросов у обоих жанров описаны дословно одинаково")
+    func bothGenresShareTheQuestionKinds() {
+        #expect(AssistPrompt.system(profile: .empty).contains(PromptFragment.questionKinds))
+        #expect(BriefPrompt.system(profile: .empty).contains(PromptFragment.questionKinds))
+        // Различаются жанры объёмом, и только им: правило длины стоит у короткого
+        // и отсутствует у развёрнутого, а общий блок про объём молчит вовсе.
+        #expect(BriefPrompt.system(profile: .empty).contains("Максимум 3–4 строки"))
+        #expect(!AssistPrompt.system(profile: .empty).contains("Максимум 3–4 строки"))
+        #expect(!PromptFragment.questionKinds.contains("Максимум"))
+    }
+
+    @Test("Правило произношения терминов пережило правку")
+    func thePronunciationRuleSurvives() {
+        let system = AssistPrompt.system(profile: .empty)
+
+        #expect(system.contains("GiST (джист)"))
+        #expect(system.contains("Только при первом упоминании"))
+    }
+
+    // MARK: - Окно транскрипта
+
+    @Test("Окно накрывает весь звонок — и у развёрнутого жанра оно то же, что у короткого")
+    func thewholeCallReachesTheModel() {
+        let call = (1...200).map { number in
+            spoken(.them, "вопрос-\(String(format: "%03d", number))", at: Double(number) * 10)
+        }
+
+        let prompt = AssistPrompt.user(transcript: call)
+
+        #expect(AssistPrompt.transcriptWindow == TranscriptFormatter.wholeCall)
+        #expect(AssistPrompt.transcriptWindow == BriefPrompt.transcriptWindow, "жанры отвечают одному разговору")
+        #expect(prompt.contains("вопрос-200"))
+        #expect(prompt.contains("вопрос-001"))
+        #expect(transcriptLines(of: prompt).count == 200)
+    }
+
+    @Test("Реплик немного — в промпт попадают все, в порядке разговора")
     func shortConversationKeepsItsOrder() {
         let call = [
-            spoken(.them, "расскажите про ваш опыт"),
-            spoken(.you, "семь лет на бэкенде"),
-            spoken(.them, "а с конкурентностью работали?"),
+            spoken(.them, "расскажите про ваш опыт", at: 0),
+            spoken(.you, "семь лет на бэкенде", at: 10),
+            spoken(.them, "а с конкурентностью работали?", at: 20),
         ]
 
         #expect(transcriptLines(of: AssistPrompt.user(transcript: call)) == [
@@ -46,7 +109,7 @@ struct AssistPromptTests {
 
     @Test("У каждой реплики стоит метка её канала")
     func everyTurnCarriesItsChannelLabel() {
-        let call = [spoken(.them, "как работает GCD?"), spoken(.you, "это очередь задач")]
+        let call = [spoken(.them, "как работает GCD?", at: 0), spoken(.you, "это очередь задач", at: 10)]
 
         let prompt = AssistPrompt.user(transcript: call)
 
@@ -54,13 +117,13 @@ struct AssistPromptTests {
         #expect(prompt.contains("You: это очередь задач"))
     }
 
-    @Test("Реплика без распознанного текста не занимает место в окне")
+    @Test("Реплика без распознанного текста не превращается в пустую строку")
     func unrecognisedTurnsAreLeftOut() {
         let call = [
-            spoken(.them, "первый вопрос"),
-            Turn(channel: .them, text: "", timestamp: 1, duration: 1),
-            Turn(channel: .you, text: "   ", timestamp: 2, duration: 1),
-            spoken(.them, "второй вопрос"),
+            spoken(.them, "первый вопрос", at: 0),
+            Turn(channel: .them, text: "", timestamp: 10, duration: 1),
+            Turn(channel: .you, text: "   ", timestamp: 20, duration: 1),
+            spoken(.them, "второй вопрос", at: 30),
         ]
 
         #expect(transcriptLines(of: AssistPrompt.user(transcript: call)) == [
@@ -85,7 +148,7 @@ struct AssistPromptTests {
     func transcriptOfSilentTurnsFallsBackToThePlaceholder() {
         let unrecognised = [
             Turn(channel: .them, text: "", timestamp: 0, duration: 1),
-            Turn(channel: .you, text: "", timestamp: 1, duration: 1),
+            Turn(channel: .you, text: "", timestamp: 10, duration: 1),
         ]
 
         #expect(
@@ -94,7 +157,7 @@ struct AssistPromptTests {
         )
     }
 
-    // MARK: - Профиль
+    // MARK: - Профиль и заготовки
 
     @Test("Профиль пользователя дописан в конец системной части")
     func profileLandsInTheSystemPrompt() {
@@ -128,6 +191,19 @@ struct AssistPromptTests {
         #expect(system.contains("Роль: Backend Engineer"))
         #expect(!system.contains("Опыт:"))
         #expect(!system.contains("Стек:"))
+    }
+
+    @Test("Заготовки к собеседованию уходят в system и развёрнутого жанра")
+    func theInterviewContextReachesTheLongGenreToo() {
+        let system = AssistPrompt.system(
+            profile: UserProfile(role: "Тимлид"),
+            interviewContext: InterviewContext(compensation: "от 400 на руки", questions: "Кто владеет роадмапом?")
+        )
+
+        #expect(system.contains(PromptFragment.interviewContextHeading))
+        #expect(system.contains("Ожидания по деньгам:\nот 400 на руки"))
+        #expect(system.contains("Вопросы к работодателю:\nКто владеет роадмапом?"))
+        #expect(!system.contains("Истории из практики"))
     }
 
     @Test("Профиль относится к пользователю: очистка разговора его не трогает")
@@ -168,8 +244,8 @@ struct AssistPromptTests {
 
     // MARK: - Хелперы
 
-    private func spoken(_ channel: Channel, _ text: String) -> Turn {
-        Turn(channel: channel, text: text, timestamp: 0, duration: 1)
+    private func spoken(_ channel: Channel, _ text: String, at timestamp: TimeInterval) -> Turn {
+        Turn(channel: channel, text: text, timestamp: timestamp, duration: 1)
     }
 
     /// Lines of the transcript block — everything that carries a channel label.

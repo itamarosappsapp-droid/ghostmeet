@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 /// Turns a screenshot into the bytes that actually go over the wire.
 ///
 /// A Retina display is around 8 megapixels; sent as-is that is megabytes per
-/// suggestion, and the loop fires on every `Them` turn (ADR-0003). Every one of
+/// suggestion, and one is taken on every press (ADR-0008). Every one of
 /// those megabytes is upload time in front of the first token, and money. So the
 /// image is scaled down to a long edge that a model still reads comfortably.
 ///

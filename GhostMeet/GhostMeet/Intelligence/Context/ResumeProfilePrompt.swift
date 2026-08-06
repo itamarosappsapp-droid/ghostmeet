@@ -9,7 +9,7 @@ import Foundation
 ///
 /// Not a suggestion and not a mode: it runs once, from the settings screen,
 /// never reaches the suggestion feed, and is not cancelled by a `Them` turn —
-/// the rules of ADR-0003 are about answers to the conversation, and this is a
+/// the rules of ADR-0008 are about answers to the conversation, and this is a
 /// piece of setup that happens before the call.
 ///
 /// Two things make it unlike every other prompt here. It carries **no**

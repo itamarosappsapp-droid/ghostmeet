@@ -13,10 +13,10 @@ import SwiftUI
 /// will appear — the question and its answer end up in one column, which is what
 /// makes it obvious mid-call which card belongs to what was just typed.
 ///
-/// Both paths are secondary to the automatic loop (ADR-0003) and neither
-/// replaces it: closing a `Them` turn goes on firing on its own, and the next one
-/// supersedes whatever was asked here — exactly as it supersedes an automatic
-/// answer.
+/// Both are the same request as the chords make, entered from the window rather
+/// than from the keyboard (ADR-0008): the transcript, the screen and the
+/// lifecycle are identical, and the next press supersedes whatever was asked
+/// here exactly as it supersedes an answer to a chord.
 struct AskBarView: View {
 
     /// The session: where the question goes and what answers it.

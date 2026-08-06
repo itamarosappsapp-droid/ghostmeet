@@ -52,7 +52,12 @@ final class SettingsStore {
         /// The key of the build that kept exactly one profile. Read once, at
         /// startup, and turned into a library — see `migratedLibrary(from:)`.
         static let legacyProfile = "settings.userProfile"
+        static let interviewContext = "settings.interviewContext"
         static let turnSegmentation = "settings.turnSegmentation"
+        /// Which retired defaults have already been replaced in the stored
+        /// thresholds — see `TurnSegmentationMigration`. Absent means "written
+        /// before ADR-0008".
+        static let turnSegmentationVersion = "settings.turnSegmentation.version"
         static let speechModel = "settings.speechModel"
         static let themSourceApplication = "settings.themSourceApplication"
         static let themCaptureBackend = "settings.themCaptureBackend"
@@ -96,6 +101,22 @@ final class SettingsStore {
     var profile: UserProfile {
         get { profileLibrary.selected }
         set { profileLibrary.replaceSelected(with: newValue) }
+    }
+
+    /// What the user prepared for the interview they are going to — stories,
+    /// motivation, money, questions back.
+    ///
+    /// One, not one per profile: the same team-lead profile goes to three
+    /// companies, and it is this that differs between them, not the experience.
+    /// See `InterviewContext` for why it is not a field of `UserProfile`.
+    ///
+    /// Persisted like everything else here, and for the same reason: it is typed
+    /// in before the call, and losing it to a restart — or to the panic key —
+    /// would be losing ten minutes of preparation at the worst possible moment.
+    /// It is emptied only when the user says so, through
+    /// `clearInterviewContext()`.
+    var interviewContext: InterviewContext {
+        didSet { persist(interviewContext, forKey: DefaultsKey.interviewContext) }
     }
 
     /// Thresholds handed to `SessionEngine` as configuration.
@@ -280,11 +301,14 @@ final class SettingsStore {
             from: defaults,
             key: DefaultsKey.profileLibrary
         ) ?? Self.migratedLibrary(from: defaults)
-        self.turnSegmentation = (Self.decode(
-            TurnSegmentationConfig.self,
+        // A build that had no interview context at all leaves nothing here, and
+        // an empty one is exactly the right answer to that.
+        self.interviewContext = Self.decode(
+            InterviewContext.self,
             from: defaults,
-            key: DefaultsKey.turnSegmentation
-        ) ?? .default).clamped()
+            key: DefaultsKey.interviewContext
+        ) ?? .empty
+        self.turnSegmentation = Self.storedTurnSegmentation(in: defaults)
         // An unknown or hand-edited value falls back to the default instead of
         // leaving the app with no model at all.
         self.speechModel = Self.decode(WhisperModel.self, from: defaults, key: DefaultsKey.speechModel)
@@ -302,6 +326,7 @@ final class SettingsStore {
         } ?? ProviderFactory.defaultSelection
         migrateLegacyProviderKeyIfNeeded()
         finishProfileMigrationIfNeeded()
+        finishTurnSegmentationMigrationIfNeeded()
         refreshProviderKeyPresence()
     }
 
@@ -354,6 +379,20 @@ final class SettingsStore {
         persist(profileLibrary, forKey: DefaultsKey.profileLibrary)
         guard defaults.data(forKey: DefaultsKey.profileLibrary) != nil else { return }
         defaults.removeObject(forKey: DefaultsKey.legacyProfile)
+    }
+
+    // MARK: - Interview context
+
+    /// Empties the interview context — the deliberate act of getting ready for
+    /// the *next* company.
+    ///
+    /// A button of its own, and pointedly not part of «Очистить контекст
+    /// разговора»: that one throws away the transcript of the call in progress
+    /// and is bound to a panic key, and wiping ten minutes of preparation with
+    /// it would be a disaster wearing the same word. The profile is untouched
+    /// either way — it belongs to the person, not to the interview.
+    func clearInterviewContext() {
+        interviewContext = .empty
     }
 
     // MARK: - Provider key
@@ -462,6 +501,40 @@ final class SettingsStore {
     /// Puts every threshold back to the spec defaults.
     func resetTurnSegmentationToDefaults() {
         turnSegmentation = .default
+    }
+
+    /// The stored thresholds, brought up to what this version ships.
+    ///
+    /// Clamping happens after the migration and not instead of it: clamping
+    /// defends against a value nobody could have chosen, migration against a
+    /// value the app itself chose and has since retired.
+    private static func storedTurnSegmentation(in defaults: UserDefaults) -> TurnSegmentationConfig {
+        guard let stored = decode(
+            TurnSegmentationConfig.self,
+            from: defaults,
+            key: DefaultsKey.turnSegmentation
+        ) else { return .default }
+
+        let version = defaults.integer(forKey: DefaultsKey.turnSegmentationVersion)
+        return TurnSegmentationMigration.migrate(stored, storedVersion: version).clamped()
+    }
+
+    /// Writes the migrated thresholds out and records that this migration has
+    /// run.
+    ///
+    /// The version is raised **after** the new value is on disk, so an upgrade
+    /// interrupted between the two migrates again instead of freezing the old
+    /// threshold under a version that claims otherwise. On a machine with nothing
+    /// stored only the version is written: there is nothing to migrate, and
+    /// leaving it absent would make the first slider drag look like a file from
+    /// the proactive build at the next launch.
+    private func finishTurnSegmentationMigrationIfNeeded() {
+        let version = defaults.integer(forKey: DefaultsKey.turnSegmentationVersion)
+        guard version < TurnSegmentationMigration.currentVersion else { return }
+        if defaults.data(forKey: DefaultsKey.turnSegmentation) != nil {
+            persist(turnSegmentation, forKey: DefaultsKey.turnSegmentation)
+        }
+        defaults.set(TurnSegmentationMigration.currentVersion, forKey: DefaultsKey.turnSegmentationVersion)
     }
 
     // MARK: - Persistence

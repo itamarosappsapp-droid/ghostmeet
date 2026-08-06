@@ -22,7 +22,7 @@ import Observation
 /// anywhere in the app.
 ///
 /// The request is one-shot background work, not a suggestion: it never enters
-/// the suggestion feed and is not cancelled by a `Them` turn (ADR-0003 governs
+/// the suggestion feed and is not cancelled by a press (ADR-0008 governs
 /// answers to the conversation; this is setup before the call).
 @MainActor
 @Observable

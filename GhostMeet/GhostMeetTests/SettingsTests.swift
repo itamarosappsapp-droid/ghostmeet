@@ -67,11 +67,19 @@ private func defaultsDump(_ defaults: UserDefaults) -> String {
 @Suite("Пороги нарезки реплик")
 struct SettingsTurnSegmentationTests {
 
-    @Test("Значения по умолчанию соответствуют спеке")
-    func defaultsMatchSpec() {
+    @Test("Порог паузы поднят: он больше не входит ни в какой бюджет задержки")
+    func theDefaultPauseThresholdIsNoLongerALatencyCompromise() {
         let settings = TurnSegmentationConfig.default
 
-        #expect(settings.pauseThreshold == 0.8)
+        #expect(settings.pauseThreshold == 1.5)
+        #expect(
+            TurnSegmentationConfig.pauseThresholdRange.contains(settings.pauseThreshold),
+            "ползунок в настройках обязан допускать значение по умолчанию"
+        )
+        #expect(
+            settings.pauseThreshold < settings.safetyFlushInterval / 3,
+            "иначе реплики режет таймер, а не тишина"
+        )
         #expect(TurnSegmentationConfig.minimumTurnDurationRange.contains(settings.minimumTurnDuration))
         #expect((0.5...0.8).contains(settings.minimumTurnDuration))
         #expect(settings.safetyFlushInterval == 10)

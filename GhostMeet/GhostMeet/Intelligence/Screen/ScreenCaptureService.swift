@@ -18,7 +18,7 @@ import ScreenCaptureKit
 /// **The overlay is not in the picture.** Not because this filter excludes it —
 /// it does not name a single window — but because the panel carries
 /// `sharingType = .none`, which takes it out of every capture the window server
-/// serves (`OverlayWindowConfiguration.overlay`, ADR-0003/0004). That is the
+/// serves (`OverlayWindowConfiguration.overlay`, ADR-0004). That is the
 /// whole mechanism, and it is load-bearing: were the overlay in the frame, every
 /// suggestion would show the model its own previous answer and the loop would
 /// start answering itself. `ScreenCaptureTests.overlayStaysOutOfTheScreenshot`
@@ -61,11 +61,11 @@ nonisolated final class ScreenCaptureService: ScreenCapturer {
 
         let captured = ContinuousClock.now
 
-        // A newer `Them` turn arrived while the frame was being taken, so what is
-        // left of this capture is its expensive half — text recognition over a
-        // full-resolution screen — spent on a question nobody is asking any more
-        // (ADR-0003). Dropped rather than reported: a superseded capture is not a
-        // failure the user has anything to do about.
+        // The user pressed again while the frame was being taken, so what is left
+        // of this capture is its expensive half — text recognition over a
+        // full-resolution screen — spent on an answer nobody is waiting for any
+        // more (ADR-0008). Dropped rather than reported: a superseded capture is
+        // not a failure the user has anything to do about.
         guard !Task.isCancelled else {
             Self.log.info(
                 "СНИМОК ЭКРАНА ОТМЕНЁН снимок_мс=\(Self.milliseconds(startedAt, captured), privacy: .public)"

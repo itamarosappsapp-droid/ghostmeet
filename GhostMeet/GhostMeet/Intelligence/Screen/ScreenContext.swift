@@ -15,7 +15,7 @@ import Foundation
 /// `ProviderCapabilities.acceptsImages`).
 ///
 /// A failure is a field rather than a thrown error on purpose: a screen that
-/// could not be grabbed must not cancel the suggestion (ADR-0003). The request
+/// could not be grabbed must not cancel the suggestion (ADR-0008). The request
 /// goes out blind, and the reason is shown inside the window — never as a system
 /// banner, which would be drawn over the shared screen (ADR-0004).
 nonisolated struct ScreenContext: Equatable, Sendable {
@@ -62,10 +62,10 @@ nonisolated struct ScreenContext: Equatable, Sendable {
 /// beyond carrying on without a picture, so the failure travels inside the
 /// result.
 ///
-/// **Cancellation is part of the contract.** A `Them` turn superseded by a newer
-/// one cancels the capture it started, and an implementation that ignores that
-/// goes on spending a frame and a few hundred milliseconds of text recognition on
-/// a question nobody is asking any more (ADR-0003). A cancelled capture answers
+/// **Cancellation is part of the contract.** A press superseded by a newer one
+/// cancels the capture it started, and an implementation that ignores that goes
+/// on spending a frame and a few hundred milliseconds of text recognition on an
+/// answer nobody is waiting for any more (ADR-0008). A cancelled capture answers
 /// `.none`: nothing was captured, and nothing went wrong.
 nonisolated protocol ScreenCapturer: Sendable {
     func capture() async -> ScreenContext

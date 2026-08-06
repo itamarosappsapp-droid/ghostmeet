@@ -9,11 +9,12 @@ import Foundation
 /// point at it.
 ///
 /// The readiness strip states a fact and offers to change it; without this the
-/// offer lands the user in a form of seven sections and leaves them to find the
+/// offer lands the user in a form of eight sections and leaves them to find the
 /// one that was just mentioned. The screen is one `Form` — see `SettingsView` —
 /// and these are its anchors, in the order they are drawn.
 enum SettingsSection: String, CaseIterable, Sendable {
     case profile
+    case interviewContext
     case captureBackend
     case sourceApplication
     case recognition

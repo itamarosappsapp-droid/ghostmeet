@@ -36,7 +36,7 @@ nonisolated enum OpenAIWireFormat {
     ) throws -> Data {
         // Last line of defence for the rule that matters most here: a screenshot
         // handed to a text-only model is a failed request, not a worse answer,
-        // and the proactive loop attaches one every time (ADR-0003).
+        // and every press attaches one (ADR-0008).
         let screenshot = configuration.acceptsImages ? request.screenshot : nil
 
         let payload = ChatRequest(

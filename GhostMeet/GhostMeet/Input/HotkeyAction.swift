@@ -8,17 +8,17 @@ import Foundation
 
 /// What a global hotkey does.
 ///
-/// Five, and deliberately no more: hotkeys are the **secondary** path in
-/// GhostMeet (ADR-0003) — the suggestion loop fires on its own, and reaching for
-/// the keyboard on camera is exactly what the proactive loop exists to avoid.
-/// These five are the things the loop cannot decide for the user.
+/// Hotkeys are **the** path in GhostMeet, not a secondary one: since ADR-0008 a
+/// request reaches the model only when the user presses. Three of these seven
+/// chords are that press — the two genres of the suggestion about the
+/// conversation, and the task on screen — and the other four are the session
+/// itself.
 ///
-/// `Solve on screen` is the one mode that earns a chord rather than only a
-/// button. It is wanted at exactly the moment the interview turns into a shared
-/// editor — when the cursor is in someone else's window, the questions have
-/// stopped, and hunting for a button in a translucent overlay is both slow and
-/// visible. `Ask` gets no chord: it needs the keyboard anyway, so the field is
-/// already the fastest way in.
+/// The order matters, because it is the order of the list in the window: the
+/// session first, then what the user actually presses mid-answer.
+///
+/// `Ask` gets no chord: it needs the keyboard anyway, so the field is already the
+/// fastest way in.
 nonisolated enum HotkeyAction: String, CaseIterable, Codable, Sendable, Identifiable {
 
     /// Show or hide the overlay. **Capture keeps running while it is hidden** —
@@ -28,11 +28,20 @@ nonisolated enum HotkeyAction: String, CaseIterable, Codable, Sendable, Identifi
     case startListening
     /// Stop listening.
     case stopListening
-    /// Ask for the task on screen to be solved, without waiting for the
-    /// interlocutor to ask anything.
+    /// Жанр «коротко» — the default press: the user is already answering and is
+    /// missing one thing.
+    case suggestBriefly
+    /// Жанр «подробно» — the full answer, for a subject that is unfamiliar whole.
+    case suggestInDetail
+    /// Ask for the task on screen to be solved. Wanted at exactly the moment the
+    /// interview turns into a shared editor — the cursor is in someone else's
+    /// window and hunting for a button in a translucent overlay is both slow and
+    /// visible.
     case solveOnScreen
     /// Forget the conversation so far. The `Профиль` survives it — it belongs to
-    /// the user, not to the call.
+    /// the user, not to the call — and so does the `Контекст собеседования`,
+    /// which belongs to the call but was typed in before it and is not part of
+    /// what was said.
     case clearContext
 
     var id: String { rawValue }
@@ -42,6 +51,8 @@ nonisolated enum HotkeyAction: String, CaseIterable, Codable, Sendable, Identifi
         case .toggleVisibility: "Показать / скрыть окно"
         case .startListening: "Начать прослушивание"
         case .stopListening: "Остановить прослушивание"
+        case .suggestBriefly: "Подсказка коротко"
+        case .suggestInDetail: "Подсказка подробно"
         case .solveOnScreen: "Решить задачу с экрана"
         case .clearContext: "Очистить контекст разговора"
         }
@@ -58,10 +69,14 @@ nonisolated enum HotkeyAction: String, CaseIterable, Codable, Sendable, Identifi
             "Если модель распознавания ещё готовится, прослушивание включится само, как только она будет готова."
         case .stopListening:
             "Останавливает оба канала и закрывает начатую реплику."
+        case .suggestBriefly:
+            "Главный аккорд. Дозакрывает вопрос собеседника и вашу начатую фразу, а просит только недостающее — термин, цифру, пару пунктов. Нажимают, уже начав отвечать."
+        case .suggestInDetail:
+            "То же, но развёрнутым разбором — когда тема незнакома целиком."
         case .solveOnScreen:
             "Просит готовое решение задачи, которая сейчас на экране. Работает и без прослушивания."
         case .clearContext:
-            "Стирает транскрипт и подсказки текущего звонка. Профиль остаётся."
+            "Стирает транскрипт и подсказки текущего звонка. Профиль и контекст собеседования остаются — они заполнены заранее."
         }
     }
 
@@ -71,11 +86,21 @@ nonisolated enum HotkeyAction: String, CaseIterable, Codable, Sendable, Identifi
     ///
     /// The panic key is the exception to the ⌘⌥ pattern: it has to be reachable
     /// in one motion, on camera, without looking down.
+    ///
+    /// The two genres get ⌥⌘A and ⌥⌘E, and the letters are chosen for the hand
+    /// rather than for a mnemonic: both are on the left half of the keyboard, so
+    /// the chord is taken by one hand without leaving the other one — the one
+    /// that is typing code — and without looking. ⌥⌘D would have been closer
+    /// still and is the system's own "hide the Dock"; ⌥⌘S is "Save All" in VS
+    /// Code; ⌥⌘W closes every window. F13–F15 are the safest chords of all and
+    /// are also absent from every laptop keyboard, which is what this app runs on.
     var defaultHotkey: Hotkey {
         switch self {
         case .toggleVisibility: Hotkey(kVK_ANSI_Backslash, [.command])
         case .startListening: Hotkey(kVK_ANSI_L, [.command, .option])
         case .stopListening: Hotkey(kVK_ANSI_Period, [.command, .option])
+        case .suggestBriefly: Hotkey(kVK_ANSI_A, [.command, .option])
+        case .suggestInDetail: Hotkey(kVK_ANSI_E, [.command, .option])
         case .solveOnScreen: Hotkey(kVK_ANSI_G, [.command, .option])
         case .clearContext: Hotkey(kVK_ANSI_K, [.command, .option])
         }
@@ -98,6 +123,8 @@ nonisolated enum HotkeyAction: String, CaseIterable, Codable, Sendable, Identifi
     private static let sharedCandidates: [Hotkey] = [
         Hotkey(kVK_ANSI_Backslash, [.command]),
         Hotkey(kVK_ANSI_Backslash, [.command, .option]),
+        Hotkey(kVK_ANSI_A, [.command, .option]),
+        Hotkey(kVK_ANSI_E, [.command, .option]),
         Hotkey(kVK_ANSI_L, [.command, .option]),
         Hotkey(kVK_ANSI_Period, [.command, .option]),
         Hotkey(kVK_ANSI_K, [.command, .option]),
@@ -117,9 +144,18 @@ nonisolated enum HotkeyAction: String, CaseIterable, Codable, Sendable, Identifi
 /// Which chord runs which action, as the user left it.
 ///
 /// An absent action is an action with **no** hotkey, and that is a state the user
-/// can choose: a binding they cleared must not come back at the next launch,
-/// which is why the defaults are applied when nothing has ever been stored and
-/// never per-action afterwards.
+/// can choose: a binding they cleared must not come back at the next launch.
+///
+/// That rule alone is not enough, and the difference cost a whole feature once.
+/// The set is stored whole, so «нет комбинации» covered two situations that look
+/// identical in the file and are opposites in meaning: the user took the chord
+/// away, and the version that wrote the file had never heard of the action. When
+/// ADR-0008 added the two genres, everyone who had ever touched a binding got a
+/// blob with the five actions of the proactive build — and the press that is now
+/// the *only* path to the model silently had no key. So the two are recorded
+/// apart: `cleared` is the user's decision and survives every upgrade, and
+/// anything neither bound nor cleared is an action this file has never seen and
+/// is given the chord it ships with.
 nonisolated struct HotkeyBindings: Codable, Equatable, Sendable {
 
     /// Keyed by the raw value rather than by `HotkeyAction`, so the stored JSON
@@ -127,8 +163,15 @@ nonisolated struct HotkeyBindings: Codable, Equatable, Sendable {
     /// appear instead of failing the whole decode.
     private var storage: [String: Hotkey]
 
+    /// Actions the user deliberately left without a chord.
+    ///
+    /// Kept by raw value for the same reason `storage` is, and kept at all
+    /// because it is the only thing that distinguishes a decision from a gap.
+    private var cleared: Set<String>
+
     init(_ pairs: [HotkeyAction: Hotkey] = [:]) {
         storage = Dictionary(uniqueKeysWithValues: pairs.map { ($0.key.rawValue, $0.value) })
+        cleared = []
     }
 
     /// What ships on a first launch.
@@ -141,6 +184,15 @@ nonisolated struct HotkeyBindings: Codable, Equatable, Sendable {
     subscript(action: HotkeyAction) -> Hotkey? {
         get { storage[action.rawValue] }
         set { assign(newValue, to: action) }
+    }
+
+    /// Whether the user chose to leave this action without a chord.
+    ///
+    /// The window says so in different words than it says «этому действию
+    /// комбинации не досталось»: one of them is a decision to remind the user of,
+    /// the other is something the app failed to give them.
+    func isCleared(_ action: HotkeyAction) -> Bool {
+        cleared.contains(action.rawValue)
     }
 
     /// Every action that currently has a chord.
@@ -167,12 +219,60 @@ nonisolated struct HotkeyBindings: Codable, Equatable, Sendable {
     mutating func assign(_ hotkey: Hotkey?, to action: HotkeyAction) {
         guard let hotkey else {
             storage.removeValue(forKey: action.rawValue)
+            cleared.insert(action.rawValue)
             return
         }
         guard hotkey.isValid else { return }
         for (raw, existing) in storage where existing == hotkey && raw != action.rawValue {
+            // Taken, not cleared: the action it is taken from ends up without a
+            // chord, but nobody decided that it should stay that way, and the
+            // window is expected to say so.
             storage.removeValue(forKey: raw)
         }
         storage[action.rawValue] = hotkey
+        cleared.remove(action.rawValue)
+    }
+
+    // MARK: - Storage
+
+    private enum CodingKeys: String, CodingKey {
+        case storage
+        case cleared
+    }
+
+    /// Reads a stored set and brings it up to the actions this version has.
+    ///
+    /// A file written before `cleared` existed carries the decision implicitly:
+    /// back then the only way for an action to be missing was for the user to
+    /// clear it, **provided the version that wrote the file knew the action at
+    /// all**. `actionsOfTheProactiveBuild` is that list, and it is written out by
+    /// hand rather than derived from `HotkeyAction.allCases` precisely because
+    /// `allCases` moves and history does not.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        storage = try container.decodeIfPresent([String: Hotkey].self, forKey: .storage) ?? [:]
+        cleared = try container.decodeIfPresent(Set<String>.self, forKey: .cleared)
+            ?? Self.actionsOfTheProactiveBuild.subtracting(storage.keys)
+        adoptDefaultsForUnknownActions()
+    }
+
+    /// The actions that existed while a chord was the secondary path (ADR-0003):
+    /// everything a file of that era leaves out, the user left out.
+    private static let actionsOfTheProactiveBuild: Set<String> = [
+        "toggleVisibility", "startListening", "stopListening", "solveOnScreen", "clearContext"
+    ]
+
+    /// Gives its shipped chord to every action this set has never heard of.
+    ///
+    /// The chord is **not** taken from whoever holds it. Stealing a binding the
+    /// user chose, silently, at launch, would be a worse version of the very
+    /// failure this migration exists to undo; the action is left without one
+    /// instead, and `HotkeyCenter.problem(with:)` states it in the window.
+    private mutating func adoptDefaultsForUnknownActions() {
+        for unknown in HotkeyAction.allCases {
+            guard storage[unknown.rawValue] == nil, !cleared.contains(unknown.rawValue) else { continue }
+            guard action(boundTo: unknown.defaultHotkey) == nil else { continue }
+            storage[unknown.rawValue] = unknown.defaultHotkey
+        }
     }
 }

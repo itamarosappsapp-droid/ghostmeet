@@ -11,24 +11,94 @@ import Foundation
 /// Each line is `Them: …` or `You: …`. The label comes from the turn's channel
 /// and therefore from the source of its audio, never from what was said: this is
 /// the only place where the two-channel guarantee becomes visible to the model.
+///
+/// Two things happen here that the stored transcript does not do, and both are
+/// consequences of the hotkey (ADR-0008). Neighbouring turns of one channel are
+/// **merged** into one line, because a question broken by a pause otherwise
+/// reads as several people talking. And the window is bounded **by characters**
+/// instead of by a count of turns, because the whole call now fits and the only
+/// thing left to bound is the size of the request.
+///
+/// Storage is untouched by either. `SessionEngine` keeps every turn with its own
+/// timestamp and duration; this is the prompt layer's view of that record, built
+/// afresh for each request.
 nonisolated enum TranscriptFormatter {
 
-    /// The window handed to the model: the last `limit` turns, oldest first.
+    /// Window value meaning "everything that was said" — the whole call.
     ///
-    /// - Parameter limit: How many turns to keep. `0` means all of them.
+    /// The default for every mode that reads the conversation at all. A
+    /// 45-minute interview is around 30 000 characters of transcript with both
+    /// sides in it, roughly 10–13 thousand tokens: that fits in one request
+    /// whole, which is why the MVP has no Summarizer and why the modes stopped
+    /// asking for the last twelve turns. What used to justify a small window was
+    /// a background compressor that does not exist; what bounds the request now
+    /// is `characterBudget`.
+    static let wholeCall = 0
+
+    /// Silence between two turns of one channel that still counts as one
+    /// utterance.
     ///
-    /// Turns with no recognised text are left out. They exist in the transcript
-    /// on purpose — a turn is kept even when recognition fails, because losing it
-    /// would be worse — but a bare `Them:` in the prompt is noise that costs a
-    /// slot in the window.
-    static func format(_ turns: [Turn], limit: Int) -> String {
-        let spoken = turns.compactMap { turn -> String? in
-            let text = turn.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return nil }
-            return "\(label(for: turn.channel)): \(text)"
-        }
-        let window = limit > 0 ? spoken.suffix(limit) : spoken[...]
-        return window.joined(separator: "\n")
+    /// Deliberately larger than any pause a user can configure: the settings
+    /// slider tops out at 2.0 s (`TurnSegmentationConfig.pauseThresholdRange`),
+    /// so at every setting there is a band between "the segmenter cut here" and
+    /// "these are two different thoughts" — otherwise merging would quietly
+    /// become a no-op for whoever turned the threshold up. Three seconds is
+    /// twice the default threshold and a third of the safety flush, so both the
+    /// ordinary case (a speaker pausing to think) and the pathological one (a
+    /// monologue chopped by the 10 s timer, gap ≈ 0) come back together.
+    ///
+    /// The upper bound is the interlocutor's own silence: if they say nothing
+    /// for longer than this and then speak, the user has had time to answer —
+    /// and if the user did answer, the turn of the other channel breaks the run
+    /// anyway, whatever the gap.
+    static let mergeGap: TimeInterval = 3
+
+    /// Ceiling on the rendered transcript, in characters.
+    ///
+    /// The whole call fits under it: ~120 words per minute of interview speech,
+    /// ~70 % of the wall clock actually spoken, ~6.5 characters per Russian word
+    /// gives ≈ 27 000 characters for 45 minutes including the channel labels.
+    /// 40 000 covers something over an hour, which is longer than the interview
+    /// this MVP is built for, and caps the transcript at roughly 13–16 thousand
+    /// tokens — affordable per press and comfortably inside the context of even
+    /// a local 32k model.
+    ///
+    /// It is a ceiling and not a target: on a call short enough to fit, nothing
+    /// here does anything at all.
+    static let characterBudget = 40_000
+
+    /// Said in place of the lines that did not fit.
+    ///
+    /// One line rather than silence: a transcript that simply starts in the
+    /// middle of a sentence reads to the model as a call that began that way,
+    /// and it will answer a question nobody asked. The `{{#if summary}}` slot of
+    /// the prompt document is where the dropped part will eventually be
+    /// summarised — until then this says plainly that it is gone.
+    static let truncationNotice = "(начало разговора опущено — не поместилось)"
+
+    /// The window handed to the model: the newest turns, oldest first, with
+    /// neighbouring turns of one channel merged.
+    ///
+    /// - Parameters:
+    ///   - limit: How many **lines** to keep after merging. `wholeCall` (0) means
+    ///     all of them, bounded only by `budget`.
+    ///   - budget: Ceiling in characters. The newest line is always kept, even
+    ///     when it alone is over budget — a request with no conversation in it at
+    ///     all would be worse than a long one.
+    ///
+    /// Turns with no recognised text are left out of the words. They exist in the
+    /// transcript on purpose — a turn is kept even when recognition fails,
+    /// because losing it would be worse — but a bare `Them:` in the prompt is
+    /// noise. They still count as turns of their channel while merging, so a
+    /// line the user said that came back empty still separates two questions.
+    static func format(
+        _ turns: [Turn],
+        limit: Int,
+        budget: Int = TranscriptFormatter.characterBudget
+    ) -> String {
+        let lines = merged(turns)
+        let window = limit > 0 ? Array(lines.suffix(limit)) : lines
+        return fitted(window, into: budget)
     }
 
     /// The channel's name as the prompts spell it.
@@ -37,5 +107,80 @@ nonisolated enum TranscriptFormatter {
         case .you: "You"
         case .them: "Them"
         }
+    }
+
+    // MARK: - Склейка
+
+    /// One rendered line per run of turns.
+    ///
+    /// A run continues while the channel stays the same **and** the gap between
+    /// the end of what has been collected and the start of the next turn is at
+    /// most `mergeGap`. Both conditions are load-bearing: the channel is what
+    /// stops a question and its answer from becoming one line, and the gap is
+    /// what stops two separate questions — asked ten minutes apart, with the user
+    /// silent in between — from becoming one either.
+    private static func merged(_ turns: [Turn]) -> [String] {
+        var lines: [String] = []
+        var run: (channel: Channel, endedAt: TimeInterval, parts: [String])?
+
+        for turn in turns {
+            let end = turn.timestamp + turn.duration
+            if var current = run,
+               current.channel == turn.channel,
+               turn.timestamp - current.endedAt <= mergeGap {
+                current.endedAt = max(current.endedAt, end)
+                if let text = turn.spokenText { current.parts.append(text) }
+                run = current
+            } else {
+                if let finished = run { lines.append(contentsOf: line(of: finished)) }
+                run = (turn.channel, end, turn.spokenText.map { [$0] } ?? [])
+            }
+        }
+        if let finished = run { lines.append(contentsOf: line(of: finished)) }
+        return lines
+    }
+
+    /// The run as one line, or nothing at all when not a word of it was
+    /// recognised.
+    private static func line(of run: (channel: Channel, endedAt: TimeInterval, parts: [String])) -> [String] {
+        guard !run.parts.isEmpty else { return [] }
+        return ["\(label(for: run.channel)): \(run.parts.joined(separator: " "))"]
+    }
+
+    // MARK: - Потолок
+
+    /// Keeps the newest lines that fit and says so when the rest were dropped.
+    ///
+    /// Counted from the end because the recent part of a conversation is the
+    /// part being answered. The notice is added on top of the budget rather than
+    /// inside it — a couple of dozen characters, and taking them out of the
+    /// allowance would mean the number in the doc no longer matched the number
+    /// in the code.
+    private static func fitted(_ lines: [String], into budget: Int) -> String {
+        guard budget > 0 else { return lines.joined(separator: "\n") }
+
+        var kept: [String] = []
+        var size = 0
+        var dropped = false
+        for line in lines.reversed() {
+            let cost = line.count + (kept.isEmpty ? 0 : 1)
+            if !kept.isEmpty, size + cost > budget {
+                dropped = true
+                break
+            }
+            kept.append(line)
+            size += cost
+        }
+        if dropped { kept.append(truncationNotice) }
+        return kept.reversed().joined(separator: "\n")
+    }
+}
+
+private extension Turn {
+    /// What this turn contributes to a line, or `nil` when recognition gave
+    /// nothing.
+    nonisolated var spokenText: String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

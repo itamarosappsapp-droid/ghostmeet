@@ -45,13 +45,14 @@ nonisolated protocol LLMProvider: Sendable {
 
     /// What this backend accepts. Read *before* a request is assembled: a
     /// screenshot handed to a text-only model is a failed request, not a worse
-    /// answer, and the automatic loop attaches one every time (ADR-0003).
+    /// answer, and every press attaches one (ADR-0008).
     var capabilities: ProviderCapabilities { get }
 
     /// Streams the answer in fragments, in order.
     ///
-    /// **Cancellation is part of the contract, not a nicety.** A new `Them`
-    /// turn cancels the in-flight suggestion (ADR-0003), so cancelling the
+    /// **Cancellation is part of the contract, not a nicety.** A new press
+    /// supersedes the suggestion in flight (ADR-0008) — and only a press does;
+    /// the interlocutor speaking cancels nothing any more — so cancelling the
     /// consuming task must actually abandon the HTTP request rather than let it
     /// run to completion in the background.
     func stream(_ request: SuggestionRequest) -> AsyncThrowingStream<String, any Error>

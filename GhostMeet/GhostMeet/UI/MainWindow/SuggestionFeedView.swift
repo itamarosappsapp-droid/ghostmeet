@@ -15,19 +15,34 @@ import SwiftUI
 /// A suggestion that could not be produced is shown here as a card like any
 /// other. This window is the only place a failure is ever reported — a system
 /// banner would be drawn over the shared screen and give the app away (ADR-0004).
+/// The same failure happening again does not get a second card — see
+/// `SuggestionFeedEntry`.
 struct SuggestionFeedView: View {
     let suggestions: [Suggestion]
 
+    /// What is actually drawn: one card per suggestion, except for a failure that
+    /// keeps repeating for the same reason.
+    private var entries: [SuggestionFeedEntry] {
+        SuggestionFeedEntry.feed(of: suggestions)
+    }
+
     var body: some View {
-        ScrollViewReader { proxy in
+        // Folded once per redraw, not once per row: `entries` walks the whole
+        // feed, and asking it for `last` inside the loop would make drawing the
+        // feed quadratic in the length of the call.
+        let entries = entries
+        let latest = entries.last?.id
+
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(suggestions) { suggestion in
+                    ForEach(entries) { entry in
                         SuggestionCard(
-                            suggestion: suggestion,
-                            isLatest: suggestion.id == suggestions.last?.id
+                            suggestion: entry.suggestion,
+                            repeats: entry.repeats,
+                            isLatest: entry.id == latest
                         )
-                        .id(suggestion.id)
+                        .id(entry.id)
                     }
                     // Anchor at the very bottom: scrolling to the card itself
                     // stops short while the card is still growing.
@@ -59,7 +74,7 @@ struct SuggestionFeedView: View {
         VStack(spacing: 4) {
             Text("Подсказок пока нет")
                 .font(.callout)
-            Text("Появятся сами, как только собеседник договорит.")
+            Text("Нажмите хоткей, когда понадобится: сама подсказка не приходит.")
                 .font(.caption)
         }
         .foregroundStyle(.secondary)
@@ -72,12 +87,20 @@ struct SuggestionFeedView: View {
 private struct SuggestionCard: View {
     let suggestion: Suggestion
 
+    /// How many identical failures this card stands for — `1` for anything the
+    /// user normally sees.
+    let repeats: Int
+
     /// The newest card, the one the user is meant to be reading right now.
     let isLatest: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             statusLine
+            // Above the answer and not below it: it says what the answer was
+            // built from, and read afterwards it would only explain a
+            // disappointment the user has already had.
+            if let notice = suggestion.notice { noticeLine(notice) }
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -101,8 +124,30 @@ private struct SuggestionCard: View {
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
 
+            // The count is the whole of what a repeat adds. Without it a second
+            // press that failed for the same reason changes nothing on screen,
+            // and a press that changes nothing reads as a press that never
+            // registered — which is the mistake ADR-0008 makes expensive.
+            if repeats > 1 {
+                Text("×\(repeats)")
+                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(.orange)
+                    .help(repeatsHelp)
+            }
+
             Spacer(minLength: 0)
         }
+    }
+
+    private var repeatsHelp: String {
+        "Одна и та же ошибка подряд \(repeats) \(Self.times(repeats)). Показана один раз — пока причина не изменилась, повторять её нечем."
+    }
+
+    /// «2 раза», «5 раз»: a count in the window has to read as Russian, and the
+    /// user is going to see this one on the day nothing works.
+    private static func times(_ count: Int) -> String {
+        if (11...14).contains(count % 100) { return "раз" }
+        return (2...4).contains(count % 10) ? "раза" : "раз"
     }
 
     private var statusTitle: String {
@@ -121,6 +166,22 @@ private struct SuggestionCard: View {
         case .superseded: .secondary
         case .failed: .orange
         }
+    }
+
+    // MARK: - Notice
+
+    /// A circumstance the answer was produced under — not a failure, so not
+    /// orange and not an exclamation mark. The user pressed and is getting an
+    /// answer; this only says which half of the input it had.
+    private func noticeLine(_ text: String) -> some View {
+        Label {
+            Text(text)
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "info.circle")
+        }
+        .font(.system(size: 10))
+        .foregroundStyle(.secondary)
     }
 
     // MARK: - Content
@@ -144,10 +205,10 @@ private struct SuggestionCard: View {
                     .font(.body)
                     .foregroundStyle(.secondary)
             } else {
-                Text(suggestion.text)
-                    .font(.body)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
+                // Re-laid out on every fragment rather than once at the end: the
+                // markup has to grow with the text, not replace it (ADR-0008 buys
+                // its second of latency back on the first line arriving early).
+                SuggestionMarkupView(text: suggestion.text)
             }
         }
     }
@@ -171,12 +232,24 @@ private struct SuggestionCard: View {
 #Preview {
     SuggestionFeedView(suggestions: [
         Suggestion(
-            text: "Я вёл миграцию сервиса на Swift Concurrency: убрал GCD-очереди, вынес состояние в акторы.",
+            text: """
+            Я вёл миграцию сервиса на **Swift Concurrency**: убрал GCD-очереди, вынес состояние в акторы.
+
+            - `DispatchQueue` → `actor`
+            - колбэки → `async/await`
+
+            ```swift
+            actor TranscriptStore { private(set) var turns: [Turn] = [] }
+            ```
+            """,
             state: .complete,
             startedAt: Date()
         ),
+        // Три одинаковых отказа подряд — на экране одна карточка с «×3».
         Suggestion(state: .failed(LLMFailure.missingKey.message), startedAt: Date()),
-        Suggestion(text: "Начну с оценки сложности: сейчас это O(n²), потому", startedAt: Date()),
+        Suggestion(state: .failed(LLMFailure.missingKey.message), startedAt: Date()),
+        Suggestion(state: .failed(LLMFailure.missingKey.message), startedAt: Date()),
+        Suggestion(text: "Начну с оценки сложности: сейчас это O(n²), потому что `contains` внутри", startedAt: Date()),
     ])
-    .frame(width: 420, height: 320)
+    .frame(width: 420, height: 420)
 }

@@ -11,8 +11,8 @@ import Foundation
 ///
 /// 1. **Streaming.** A suggestion has to start appearing while the model is
 ///    still writing it, so fragments are yielded the moment they arrive.
-/// 2. **Real cancellation.** A new `Them` turn cancels the in-flight suggestion
-///    (ADR-0003). Cancelling the consuming task terminates the stream, which
+/// 2. **Real cancellation.** A new press supersedes the suggestion in flight
+///    (ADR-0008). Cancelling the consuming task terminates the stream, which
 ///    cancels the work task, which tears down the HTTP request — the answer to
 ///    the previous question is never paid for or finished in the background.
 ///
@@ -28,10 +28,10 @@ nonisolated struct ClaudeProvider: LLMProvider {
         /// provider and no router, so there is nothing to negotiate at runtime.
         var model: String = "claude-opus-5"
 
-        /// `low` on purpose. The product promise is a suggestion inside the
-        /// ~800 ms pause; the model is already generating after STT and a
-        /// screenshot, and higher effort spends its budget before the first
-        /// visible character.
+        /// `low` on purpose. The user presses while already speaking and waits
+        /// with their mouth open; the model only starts after the tail of the
+        /// question is recognised and the screen is grabbed, and higher effort
+        /// spends its budget before the first visible character.
         var effort: String = "low"
 
         /// Off on purpose, for the same reason: on this model thinking is on by

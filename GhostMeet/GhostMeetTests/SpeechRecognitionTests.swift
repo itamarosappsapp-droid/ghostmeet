@@ -37,7 +37,7 @@ private struct RecognitionFixture {
     /// Someone speaks into `channel` and then stops long enough to close the turn.
     func saysSomething(lasting seconds: TimeInterval, on channel: Channel = .you) {
         speaks(for: seconds, on: channel)
-        staysQuiet(for: 0.9, on: channel)
+        staysQuiet(for: TurnSegmentationConfig.default.pauseThreshold + 0.2, on: channel)
     }
 
     func speaks(for seconds: TimeInterval, on channel: Channel = .you) {

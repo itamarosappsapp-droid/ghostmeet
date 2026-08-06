@@ -8,8 +8,8 @@ import Foundation
 /// Builds the request for the `Ask` mode — the user's own question, typed into
 /// the overlay instead of waited for.
 ///
-/// The mode exists because the proactive loop can only answer what the
-/// interlocutor said (ADR-0003), and the user sometimes needs something the
+/// The mode exists because the genres can only answer what the
+/// interlocutor said (ADR-0008), and the user sometimes needs something the
 /// interlocutor never asked: «что это за ошибка на экране», «как мне это
 /// свернуть». It is the one mode whose input is neither the transcript nor the
 /// screen but a sentence the user wrote.
@@ -18,12 +18,15 @@ import Foundation
 /// its only implementation, and the two are changed together.
 nonisolated enum AskPrompt {
 
-    /// How many turns of the transcript the mode reads — `transcript_last_12`.
+    /// How much of the conversation the mode reads: the whole call, the same as
+    /// the two genres (`TranscriptFormatter.wholeCall`).
     ///
-    /// The same window `Assist` gets, and for the same reason: the question is
-    /// usually about what is happening right now, and older turns are the
-    /// Summarizer's job rather than the window's.
-    static let transcriptWindow = 12
+    /// The old twelve-turn window assumed a background Summarizer would carry
+    /// everything older. There is none, and `Ask` is the mode most likely to be
+    /// about something said a while ago — «что он спрашивал про репликацию?» is
+    /// unanswerable from the last twelve turns and trivially answerable from the
+    /// call.
+    static let transcriptWindow = TranscriptFormatter.wholeCall
 
     /// Budget for the mode: the bottom of the 2k–4k band the prompt document
     /// gives the screen-and-code modes (note 4).
@@ -48,24 +51,31 @@ nonisolated enum AskPrompt {
         question: String,
         transcript: [Turn] = [],
         profile: UserProfile = .empty,
+        interviewContext: InterviewContext = .empty,
         screenText: String = "",
         screenshot: Data? = nil
     ) -> SuggestionRequest {
         SuggestionRequest(
-            systemPrompt: system(profile: profile),
+            systemPrompt: system(profile: profile, interviewContext: interviewContext),
             userPrompt: user(question: question, transcript: transcript, screenText: screenText),
             screenshot: screenshot,
             maxTokens: maxTokens
         )
     }
 
-    /// Role and rules, with the user's `Профиль` appended at the end.
+    /// Role and rules, with what is known about the user appended at the end.
     ///
-    /// The profile is here and not only in `Assist` because the question is
+    /// The profile is here and not only in the genres because the question is
     /// often about the user themselves — «что ответить про мой опыт с Kafka» —
-    /// and an answer built on experience they do not have is worse than none.
-    static func system(profile: UserProfile) -> String {
-        PromptFragment.system(systemRules, profile: profile)
+    /// and an answer built on experience they do not have is worse than none. The
+    /// `Контекст собеседования` follows for the same reason and answers the same
+    /// class of question typed out by hand: «что сказать про зарплату» has a
+    /// prepared answer, and the model must read it rather than invent a number.
+    static func system(
+        profile: UserProfile,
+        interviewContext: InterviewContext = .empty
+    ) -> String {
+        PromptFragment.system(systemRules, profile: profile, interviewContext: interviewContext)
     }
 
     /// The transcript window, what is written on the screen, and the question.
@@ -79,7 +89,7 @@ nonisolated enum AskPrompt {
         var blocks: [String] = []
 
         let window = TranscriptFormatter.format(transcript, limit: transcriptWindow)
-        if !window.isEmpty { blocks.append("Недавний разговор:\n\(window)") }
+        if !window.isEmpty { blocks.append("Разговор:\n\(window)") }
 
         // The words on screen reach every backend, including the ones that
         // cannot take an image: for a local server or a CLI this is all they will

@@ -18,8 +18,8 @@ import Foundation
 ///
 /// 1. **Streaming**, because a suggestion has to start appearing while the model
 ///    is still writing it.
-/// 2. **Real cancellation.** A new `Them` turn cancels the in-flight suggestion
-///    (ADR-0003): terminating the stream cancels the work task, which tears down
+/// 2. **Real cancellation.** A new press supersedes the suggestion in flight
+///    (ADR-0008): terminating the stream cancels the work task, which tears down
 ///    the HTTP request instead of letting it finish in the background.
 nonisolated struct OpenAICompatibleProvider: LLMProvider {
 

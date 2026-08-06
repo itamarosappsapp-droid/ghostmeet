@@ -7,15 +7,15 @@ import Foundation
 import Testing
 @testable import GhostMeet
 
-/// The modes the user starts themselves: a question typed into the overlay
-/// (`Ask`) and the demand for the task on screen to be solved (`Solve on
-/// screen`).
+/// The two modes that answer something other than the conversation: a question
+/// typed into the overlay (`Ask`) and the demand for the task on screen to be
+/// solved (`Solve on screen`).
 ///
 /// Two things are checked here and nowhere else. What the model is actually
 /// shown — the wording is copied from docs/GhostMeet-Prompts.md §5 and §6, and
 /// these tests are what stops the code and the document drifting apart. And that
-/// a manual request lives under the same rules as an automatic one: the next
-/// `Them` turn cancels it, and it never runs beside the loop (ADR-0003).
+/// these two live under exactly the same rules as the genres: one press at a
+/// time, superseded by the next press and by nothing else (ADR-0008).
 @Suite("Промпт режима Ask")
 struct AskPromptTests {
 
@@ -25,12 +25,12 @@ struct AskPromptTests {
     func theQuestionComesLast() {
         let prompt = AskPrompt.user(
             question: "что это за ошибка?",
-            transcript: [spoken(.them, "смотрите на консоль")],
+            transcript: [spoken(.them, "смотрите на консоль", at: 0)],
             screenText: "fatal error: index out of range"
         )
 
         #expect(prompt.hasSuffix("Вопрос: что это за ошибка?"))
-        #expect(prompt.contains("Недавний разговор:"))
+        #expect(prompt.contains("Разговор:"))
         #expect(prompt.contains("Them: смотрите на консоль"))
         #expect(prompt.contains("Текст с экрана (OCR):"))
         #expect(prompt.contains("fatal error: index out of range"))
@@ -45,24 +45,23 @@ struct AskPromptTests {
 
     // MARK: - Окно транскрипта
 
-    @Test("Разговор идёт давно — модель видит только последние двенадцать реплик")
-    func onlyTheLastTwelveTurnsReachTheModel() {
-        let long = (1...20).map { spoken(.them, "вопрос-\(String(format: "%02d", $0))") }
+    @Test("Разговор идёт давно — вопрос про сказанное полчаса назад отвечать есть чем")
+    func thewholeCallReachesTheModel() {
+        let long = (1...200).map { spoken(.them, "вопрос-\(String(format: "%03d", $0))", at: Double($0) * 10) }
 
         let prompt = AskPrompt.user(question: "о чём вообще речь?", transcript: long)
 
-        #expect(AskPrompt.transcriptWindow == 12)
-        #expect(prompt.contains("вопрос-20"), "последняя реплика обязана быть в промпте")
-        #expect(prompt.contains("вопрос-09"), "двенадцатая с конца ещё попадает в окно")
-        #expect(!prompt.contains("вопрос-08"), "тринадцатая с конца уже за окном")
-        #expect(transcriptLines(of: prompt).count == 12)
+        #expect(AskPrompt.transcriptWindow == TranscriptFormatter.wholeCall)
+        #expect(prompt.contains("вопрос-200"), "последняя реплика обязана быть в промпте")
+        #expect(prompt.contains("вопрос-001"), "и первая тоже: окно накрывает весь звонок")
+        #expect(transcriptLines(of: prompt).count == 200)
     }
 
     @Test("У каждой реплики стоит метка её канала")
     func everyTurnCarriesItsChannelLabel() {
         let prompt = AskPrompt.user(
             question: "что ему ответить?",
-            transcript: [spoken(.them, "как работает GCD?"), spoken(.you, "это очередь задач")]
+            transcript: [spoken(.them, "как работает GCD?", at: 0), spoken(.you, "это очередь задач", at: 10)]
         )
 
         #expect(prompt.contains("Them: как работает GCD?"))
@@ -76,7 +75,7 @@ struct AskPromptTests {
         let request = AskPrompt.request(question: "что на экране?")
 
         #expect(request.userPrompt == "Вопрос: что на экране?")
-        #expect(!request.userPrompt.contains("Недавний разговор:"), "пустой заголовок — ложь про разговор")
+        #expect(!request.userPrompt.contains("Разговор:"), "пустой заголовок — ложь про разговор")
         #expect(!request.systemPrompt.isEmpty)
     }
 
@@ -84,7 +83,7 @@ struct AskPromptTests {
     func transcriptOfSilentTurnsAddsNoBlock() {
         let unrecognised = [
             Turn(channel: .them, text: "", timestamp: 0, duration: 1),
-            Turn(channel: .you, text: "   ", timestamp: 1, duration: 1),
+            Turn(channel: .you, text: "   ", timestamp: 10, duration: 1),
         ]
 
         #expect(
@@ -117,6 +116,21 @@ struct AskPromptTests {
     @Test("Профиль не заполнен — пустого блока в системной части нет")
     func emptyProfileAddsNothing() {
         #expect(!AskPrompt.system(profile: .empty).contains("Контекст о пользователе"))
+    }
+
+    @Test("Заготовки к собеседованию доходят и до режима Ask")
+    func theInterviewContextReachesAsk() {
+        let system = AskPrompt.system(
+            profile: .empty,
+            interviewContext: InterviewContext(compensation: "вилка 350–420")
+        )
+
+        #expect(system.contains(PromptFragment.interviewContextHeading))
+        #expect(
+            system.contains("Ожидания по деньгам:\nвилка 350–420"),
+            "«что сказать про зарплату» — типичный вопрос в поле Ask, и сумма у него уже заготовлена"
+        )
+        #expect(!AskPrompt.system(profile: .empty).contains(PromptFragment.interviewContextHeading))
     }
 
     // MARK: - Текст промпта и настройки режима
@@ -154,8 +168,10 @@ struct AskPromptTests {
 
     // MARK: - Хелперы
 
-    private func spoken(_ channel: Channel, _ text: String) -> Turn {
-        Turn(channel: channel, text: text, timestamp: 0, duration: 1)
+    /// Turns are spaced well past `TranscriptFormatter.mergeGap`, so each of them
+    /// stays a line of its own: what is checked here is the window, not the merge.
+    private func spoken(_ channel: Channel, _ text: String, at timestamp: TimeInterval) -> Turn {
+        Turn(channel: channel, text: text, timestamp: timestamp, duration: 1)
     }
 
     /// Lines of the transcript block — everything that carries a channel label.
@@ -257,9 +273,9 @@ struct SolvePromptTests {
 
 // MARK: - Сборка запроса под возможности провайдера
 
-@Suite("Сборка ручного запроса")
+@Suite("Сборка запроса по тому, что нажали")
 @MainActor
-struct ManualComposerTests {
+struct PromptComposerTests {
 
     private let screen = ScreenContext(
         image: Data([0x89, 0x50, 0x4E, 0x47]),
@@ -268,7 +284,7 @@ struct ManualComposerTests {
 
     @Test("Ask собирается промптом своего режима, с профилем и разговором")
     func askUsesItsOwnPrompt() {
-        let composer = ManualPromptComposer { UserProfile(role: "Backend Engineer") }
+        let composer = PromptComposer(profile: { UserProfile(role: "Backend Engineer") })
 
         let request = composer.compose(
             .question("что ему ответить?"),
@@ -285,7 +301,7 @@ struct ManualComposerTests {
 
     @Test("Solve собирается промптом своего режима и разговор не читает")
     func solveUsesItsOwnPrompt() {
-        let composer = ManualPromptComposer { UserProfile(role: "Backend Engineer") }
+        let composer = PromptComposer(profile: { UserProfile(role: "Backend Engineer") })
 
         let request = composer.compose(
             .screenTask,
@@ -303,17 +319,49 @@ struct ManualComposerTests {
         )
     }
 
+    @Test("Каждый жанр собирается своим промптом, а не обрезанным чужим")
+    func eachGenreUsesItsOwnPrompt() {
+        let composer = PromptComposer(profile: { UserProfile(role: "Backend Engineer") })
+        let transcript = [Turn(channel: .them, text: "как вы шардируете?", timestamp: 0, duration: 1)]
+
+        let brief = composer.compose(.brief, transcript: transcript, screen: screen, accepting: .multimodal)
+        let detailed = composer.compose(.detailed, transcript: transcript, screen: screen, accepting: .multimodal)
+
+        #expect(brief.systemPrompt == BriefPrompt.system(profile: UserProfile(role: "Backend Engineer")))
+        #expect(detailed.systemPrompt == AssistPrompt.system(profile: UserProfile(role: "Backend Engineer")))
+        #expect(brief.maxTokens == BriefPrompt.maxTokens)
+        #expect(detailed.maxTokens == AssistPrompt.maxTokens)
+        #expect(brief.userPrompt.contains("Them: как вы шардируете?"))
+        #expect(detailed.userPrompt.contains("Them: как вы шардируете?"))
+        #expect(brief.screenshot == screen.image, "скриншот прикладывается к каждому запросу")
+        #expect(detailed.screenshot == screen.image)
+    }
+
+    @Test("Разговор читают все нажатия, кроме решения задачи с экрана")
+    func onlySolveIgnoresTheConversation() {
+        #expect(SuggestionAsk.brief.readsTranscript)
+        #expect(SuggestionAsk.detailed.readsTranscript)
+        #expect(SuggestionAsk.question("что тут?").readsTranscript)
+        #expect(
+            SuggestionAsk.screenTask.readsTranscript == false,
+            "иначе решение с экрана платило бы ожиданием слов, которых его промпт всё равно не увидит"
+        )
+    }
+
     @Test("Провайдер не берёт картинок — снимок снимается, а текст с экрана остаётся")
     func aTextOnlyProviderKeepsTheScreenText() {
-        let composer = ManualPromptComposer()
+        let composer = PromptComposer()
 
         let ask = composer.compose(.question("что тут?"), transcript: [], screen: screen, accepting: .textOnly)
         let solve = composer.compose(.screenTask, transcript: [], screen: screen, accepting: .textOnly)
+        let brief = composer.compose(.brief, transcript: [], screen: screen, accepting: .textOnly)
 
         #expect(ask.screenshot == nil)
         #expect(solve.screenshot == nil)
+        #expect(brief.screenshot == nil)
         #expect(ask.userPrompt.contains("class Solution:"), "для локальной модели это всё, что она узнает про экран")
         #expect(solve.userPrompt.contains("class Solution:"))
+        #expect(brief.userPrompt.contains("class Solution:"))
     }
 
     @Test("Очищенный контекст не доезжает до вопроса пользователя")
@@ -323,7 +371,7 @@ struct ManualComposerTests {
         let kept = Turn(channel: .them, text: "новый вопрос", timestamp: 1, duration: 1)
         context.forget(turns: [forgotten], suggestions: [])
 
-        let composer = ContextLimitedManualComposer(context: context, wrapped: ManualPromptComposer())
+        let composer = ContextLimitedComposer(context: context, wrapped: PromptComposer())
         let request = composer.compose(
             .question("о чём речь?"),
             transcript: [forgotten, kept],
@@ -338,9 +386,9 @@ struct ManualComposerTests {
 
 // MARK: - Ручной запрос в живом цикле
 
-/// The manual modes inside the session: what reaches the model, and what happens
-/// to a manual answer when the conversation moves on.
-@Suite("Ручной запрос в цикле подсказок")
+/// `Ask` and `Solve on screen` inside the session: what reaches the model, and
+/// what happens to their answer when the user presses again.
+@Suite("Ask и Solve в жизни сессии")
 @MainActor
 struct ManualRequestLifecycleTests {
 
@@ -359,7 +407,6 @@ struct ManualRequestLifecycleTests {
         #expect(call.engine.suggestions.count == 1)
         #expect(call.engine.suggestions[0].text == "Скажи про индексы.")
         #expect(call.engine.suggestions[0].state == .complete)
-        #expect(call.engine.suggestions[0].promptedBy == nil, "вопрос задал пользователь, а не реплика Them")
     }
 
     @Test("Пустой вопрос не уходит никуда")
@@ -419,10 +466,10 @@ struct ManualRequestLifecycleTests {
         #expect(call.engine.suggestions[0].state == .failed(LLMFailure.missingKey.message))
     }
 
-    // MARK: - Отмена по реплике Them
+    // MARK: - Вытеснение
 
-    @Test("Собеседник заговорил — ручной ответ перебивается ровно как автоматический")
-    func aThemTurnSupersedesAManualAnswer() async {
+    @Test("Собеседник заговорил — ответ на вопрос пользователя это не отменяет")
+    func aThemTurnLeavesTheAnswerAlone() async {
         let call = ManualCall(model: ManualModel(.manual), recognises: "а расскажите про индексы")
 
         call.engine.ask("что тут на экране?")
@@ -433,23 +480,17 @@ struct ManualRequestLifecycleTests {
         call.says(.them)
         await call.engine.waitForRecognition()
 
-        #expect(
-            await call.model.streamWasCancelled(0),
-            "отменённый ручной запрос обязан оборваться на проводе, а не досчитываться в фоне"
-        )
-        #expect(call.engine.suggestions.count == 2, "реплика Them запускает свою подсказку")
-        #expect(call.engine.suggestions[0].state == .superseded)
-        #expect(
-            call.engine.suggestions[0].text == "На экране ",
-            "написанное остаётся в ленте: пользователь мог начать это читать"
-        )
-        #expect(call.engine.suggestions[1].state == .streaming)
+        #expect(call.model.cancelledStreams.isEmpty, "реплика Them больше ничего не отменяет (ADR-0008)")
+        #expect(call.engine.suggestions.count == 1, "и ничего не запускает")
+        #expect(call.engine.suggestions[0].state == .streaming)
+        #expect(call.engine.transcript.count == 1, "слова при этом пишутся как обычно")
 
-        call.model.finish(1)
+        call.model.finish(0)
         await call.engine.waitForSuggestion()
+        #expect(call.engine.suggestions[0].state == .complete)
     }
 
-    @Test("Своя речь ручной ответ не отменяет — как и автоматический")
+    @Test("Своя речь ответ не отменяет")
     func aYouTurnCancelsNothing() async {
         let call = ManualCall(model: ManualModel(.manual), recognises: "сейчас посмотрю")
 
@@ -473,13 +514,12 @@ struct ManualRequestLifecycleTests {
         #expect(call.engine.suggestions[0].state == .complete)
     }
 
-    // MARK: - Ручной запрос не идёт параллельно с автоматическим
-
-    @Test("Ручной запрос перебивает автоматический — две генерации в одну ленту не пишут")
-    func aManualRequestSupersedesTheAutomaticAnswer() async {
+    @Test("Solve поверх начатого ответа — две генерации в одну ленту не пишут")
+    func solveSupersedesTheAnswerInFlight() async {
         let call = ManualCall(model: ManualModel(.manual), recognises: "расскажите про транзакции")
 
         call.says(.them)
+        call.engine.suggestBriefly()
         #expect(await call.modelWasAsked(1))
         call.model.emit("Транзакция — ", into: 0)
         #expect(await call.textOfLatestReaches("Транзакция — "))
@@ -487,7 +527,7 @@ struct ManualRequestLifecycleTests {
         call.engine.solveOnScreen()
         #expect(await call.modelWasAsked(2))
 
-        #expect(await call.model.streamWasCancelled(0), "автоматический ответ обязан оборваться")
+        #expect(await call.model.streamWasCancelled(0), "предыдущий ответ обязан оборваться")
         #expect(call.engine.suggestions.count == 2)
         #expect(call.engine.suggestions[0].state == .superseded)
         #expect(call.engine.suggestions[0].text == "Транзакция — ")
@@ -498,11 +538,10 @@ struct ManualRequestLifecycleTests {
         #expect(call.engine.suggestions[1].state == .complete)
     }
 
-    @Test("Автоподсказка по уже закрытой реплике не садится поверх ручного ответа")
-    func aPendingAutomaticAnswerNeverLandsOnTopOfAManualOne() async {
-        // Распознавание держится: реплика Them закрылась, её автоматический
-        // запрос ещё не собран — ровно тот зазор, в который попадает вопрос
-        // пользователя.
+    @Test("Реплика, закрытая перед вопросом пользователя, своего запроса не делает")
+    func aClosedTurnNeverLandsOnTopOfTheQuestion() async {
+        // Распознавание держится: реплика Them закрылась, слов у неё ещё нет —
+        // ровно тот зазор, в который попадает вопрос пользователя.
         let call = ManualCall(
             model: ManualModel(.fragments(["готово"])),
             recognises: "расскажите про транзакции",
@@ -511,12 +550,11 @@ struct ManualRequestLifecycleTests {
 
         call.says(.them)
         call.engine.ask("что тут на экране?")
-        #expect(await call.modelWasAsked(1))
 
         await call.recognizer.release()
         await call.engine.waitForSuggestion()
 
-        #expect(call.model.requests.count == 1, "перебитая реплика своего запроса уже не делает")
+        #expect(call.model.requests.count == 1, "закрытая реплика запроса не делает")
         #expect(call.model.requests[0].userPrompt.hasSuffix("Вопрос: что тут на экране?") == true)
         #expect(call.engine.suggestions.count == 1)
         #expect(call.engine.suggestions[0].state == .complete)
@@ -526,13 +564,14 @@ struct ManualRequestLifecycleTests {
         )
     }
 
-    @Test("После ручного ответа цикл продолжает работать сам")
-    func theProactiveLoopSurvivesAManualRequest() async {
+    @Test("После вопроса пользователя нажатия продолжают работать")
+    func pressesKeepWorkingAfterAQuestion() async {
         let call = ManualCall(model: ManualModel(.fragments(["ответ"])), recognises: "следующий вопрос")
 
         call.engine.ask("что на экране?")
         await call.engine.waitForSuggestion()
         call.says(.them)
+        call.engine.suggestBriefly()
         await call.engine.waitForSuggestion()
 
         #expect(call.model.requests.count == 2)
@@ -542,29 +581,54 @@ struct ManualRequestLifecycleTests {
     }
 }
 
-// MARK: - Хоткей
+// MARK: - Хоткеи
 
-@Suite("Хоткей режима Solve on screen")
+@Suite("Аккорды, по которым уходит запрос")
 @MainActor
-struct SolveHotkeyTests {
+struct RequestHotkeyTests {
 
-    @Test("Комбинация решения задачи есть и годится для глобальной регистрации")
-    func theChordExistsAndIsUsable() {
-        let hotkey = HotkeyBindings.default[.solveOnScreen]
+    /// Everything that reaches the model has a chord, because since ADR-0008 a
+    /// chord is the only way anything reaches it at all.
+    private static let asking: [HotkeyAction] = [.suggestBriefly, .suggestInDetail, .solveOnScreen]
 
-        #expect(hotkey != nil, "режим без комбинации был бы недостижим без мыши")
-        #expect(hotkey?.isValid == true, "комбинация без ⌘/⌥/⌃ отберёт обычный ввод у всей системы")
+    @Test("У каждого запроса своя комбинация, и все они годятся для глобальной регистрации")
+    func everyRequestHasAUsableChord() {
+        for action in Self.asking {
+            let hotkey = HotkeyBindings.default[action]
+            #expect(hotkey != nil, "\(action.rawValue): без комбинации запрос был бы недостижим без мыши")
+            #expect(hotkey?.isValid == true, "комбинация без ⌘/⌥/⌃ отберёт обычный ввод у всей системы")
+        }
     }
 
-    @Test("Нажатие комбинации запускает именно решение с экрана")
-    func pressingTheChordSolvesTheScreen() {
-        var fired = 0
+    @Test("Нажатие каждой комбинации запускает именно своё действие")
+    func eachChordRunsItsOwnAction() {
+        var ran: [HotkeyAction] = []
         var actions = HotkeyActions()
-        actions.solveOnScreen = { fired += 1 }
+        actions.suggestBriefly = { ran.append(.suggestBriefly) }
+        actions.suggestInDetail = { ran.append(.suggestInDetail) }
+        actions.solveOnScreen = { ran.append(.solveOnScreen) }
 
-        actions[.solveOnScreen]()
+        for action in Self.asking { actions[action]() }
 
-        #expect(fired == 1)
+        #expect(ran == Self.asking)
+    }
+
+    @Test("Оба жанра доходят до движка и собираются разными промптами")
+    func bothGenresReachTheEngine() async {
+        let call = ManualCall(model: ManualModel(.fragments(["ответ"])), recognises: "что такое GiST")
+        var actions = HotkeyActions()
+        actions.suggestBriefly = { call.engine.suggestBriefly() }
+        actions.suggestInDetail = { call.engine.suggestInDetail() }
+
+        call.says(.them)
+        actions[.suggestBriefly]()
+        await call.engine.waitForSuggestion()
+        actions[.suggestInDetail]()
+        await call.engine.waitForSuggestion()
+
+        #expect(call.model.requests.count == 2)
+        #expect(call.model.requests[0].systemPrompt == BriefPrompt.system(profile: .empty))
+        #expect(call.model.requests[1].systemPrompt == AssistPrompt.system(profile: .empty))
     }
 }
 
@@ -599,8 +663,7 @@ private struct ManualCall {
         self.engine = SessionEngine(
             recognizer: recognizer,
             provider: model,
-            composer: AssistSuggestionComposer { .empty },
-            manualComposer: ManualPromptComposer { .empty },
+            composer: PromptComposer(profile: { .empty }),
             capturer: capturer ?? NoScreenCapturer(),
             clock: clock
         )
@@ -610,7 +673,7 @@ private struct ManualCall {
     /// the turn to close.
     func says(_ channel: Channel, for seconds: TimeInterval = 1.2) {
         feed(seconds: seconds) { AudioFrames.speech(channel: channel, duration: frameLength) }
-        feed(seconds: 0.9) { AudioFrames.silence(channel: channel, duration: frameLength) }
+        feed(seconds: TurnSegmentationConfig.default.pauseThreshold + 0.2) { AudioFrames.silence(channel: channel, duration: frameLength) }
     }
 
     func textOfLatestReaches(_ text: String, within timeout: Duration = .seconds(2)) async -> Bool {

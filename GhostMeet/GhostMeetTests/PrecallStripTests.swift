@@ -306,8 +306,8 @@ struct ProfileSwitchReachesThePromptTests {
 
     /// The composer the session actually runs, built the way the composition
     /// root builds it: reading `SettingsStore.profile` at request time.
-    private func composer(_ settings: SettingsStore) -> AssistSuggestionComposer {
-        AssistSuggestionComposer { settings.profile }
+    private func composer(_ settings: SettingsStore) -> PromptComposer {
+        PromptComposer(profile: { settings.profile })
     }
 
     private var transcript: [Turn] {
@@ -341,6 +341,7 @@ struct ProfileSwitchReachesThePromptTests {
 
             settings.selectProfile(fullstack)
             let asFullstack = composer(settings).compose(
+                .brief,
                 transcript: transcript,
                 screen: .none,
                 accepting: .multimodal
@@ -351,6 +352,7 @@ struct ProfileSwitchReachesThePromptTests {
 
             settings.selectProfile(settings.profiles[0].id)
             let asLead = composer(settings).compose(
+                .brief,
                 transcript: transcript,
                 screen: .none,
                 accepting: .multimodal
@@ -378,6 +380,7 @@ struct ProfileSwitchReachesThePromptTests {
 
             let shown = readiness(of: settings).profile.value
             let sent = composer(settings).compose(
+                .brief,
                 transcript: transcript,
                 screen: .none,
                 accepting: .multimodal
@@ -407,7 +410,7 @@ struct ProfileSwitchReachesThePromptTests {
             #expect(readiness(of: settings).profile.value == "Тимлид")
             #expect(
                 composer(settings)
-                    .compose(transcript: [], screen: .none, accepting: .multimodal)
+                    .compose(.brief, transcript: [], screen: .none, accepting: .multimodal)
                     .systemPrompt
                     .contains("team lead")
             )

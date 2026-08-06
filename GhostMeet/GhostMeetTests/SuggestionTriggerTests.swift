@@ -7,36 +7,60 @@ import Foundation
 import Testing
 @testable import GhostMeet
 
-/// Scenarios of the proactive loop, played out through the one seam of the app.
+/// What starts a suggestion, and what deliberately does not.
 ///
-/// The interlocutor says something and stops; what is checked is what the user
-/// would see in the window — whether a suggestion showed up at all, what text
-/// grew in it, and what it said when nothing could be produced. The model is a
-/// stub: none of these tests reach a network (ADR-0003).
-@Suite("Автоподсказка по реплике Them")
+/// Since ADR-0008 the answer is: a press, and nothing else. The interlocutor can
+/// ask a whole question and fall silent — it lands in the transcript and asks the
+/// model for nothing, because the candidate knows most of the answers and the
+/// suggestion is for the minority they do not.
+///
+/// What is checked is what the user would see in the window: whether a suggestion
+/// showed up at all, what text grew in it, and what it said when nothing could be
+/// produced. The model is a stub: none of these tests reach a network.
+@Suite("Запуск подсказки нажатием")
 @MainActor
 struct SuggestionTriggerTests {
 
     // MARK: - Что запускает подсказку
 
-    @Test("Собеседник договорил и замолчал — подсказка запустилась сама")
-    func themTurnStartsSuggestion() async {
+    @Test("Пользователь нажал — подсказка запустилась")
+    func aPressStartsTheSuggestion() async {
         let call = SuggestionCall(
             provider: StubLLMProvider(.fragments(["Расскажу ", "про миграцию."])),
             recognisesAs: "расскажите про ваш опыт"
         )
 
         call.says(.them)
+        call.engine.suggestBriefly()
         await call.engine.waitForSuggestion()
 
-        #expect(call.engine.suggestions.count == 1, "реплика Them должна была запустить подсказку")
+        #expect(call.engine.suggestions.count == 1, "нажатие должно было запустить подсказку")
         #expect(call.engine.suggestions.first?.text == "Расскажу про миграцию.")
         #expect(call.engine.suggestions.first?.state == .complete)
         #expect(call.provider.requests.count == 1, "к модели должен был уйти ровно один запрос")
     }
 
-    @Test("Реплику договорил сам пользователь — ничего не запускается")
-    func youTurnStartsNothing() async {
+    @Test("Собеседник договорил и замолчал — сам по себе запрос не уходит")
+    func aClosedThemTurnAsksForNothing() async {
+        let call = SuggestionCall(
+            provider: StubLLMProvider(),
+            recognisesAs: "расскажите про ваш опыт"
+        )
+
+        call.says(.them)
+        await call.engine.waitForSuggestion()
+
+        #expect(
+            call.engine.transcript.map(\.channel) == [.them],
+            "реплика обязана попасть в транскрипт: распознавание работает без нажатий"
+        )
+        #expect(call.engine.transcript.first?.text == "расскажите про ваш опыт")
+        #expect(call.engine.suggestions.isEmpty, "закрытая реплика Them больше ничего не запускает")
+        #expect(call.provider.requests.isEmpty, "к модели не должно было уйти ничего")
+    }
+
+    @Test("Реплику договорил сам пользователь — тоже ничего не запускается")
+    func aYouTurnStartsNothing() async {
         let call = SuggestionCall(
             provider: StubLLMProvider(),
             recognisesAs: "я работал в основном с бэкендом"
@@ -46,22 +70,54 @@ struct SuggestionTriggerTests {
         await call.engine.waitForSuggestion()
 
         #expect(call.engine.transcript.map(\.channel) == [.you], "реплика должна была попасть в транскрипт")
-        #expect(call.engine.suggestions.isEmpty, "собственная речь подсказку не запрашивает")
-        #expect(call.provider.requests.isEmpty, "к модели не должно было уйти ничего")
+        #expect(call.engine.suggestions.isEmpty)
+        #expect(call.provider.requests.isEmpty)
     }
 
-    @Test("Заговорил собеседник — подсказка появилась и на его реплику, и только на неё")
-    func onlyThemTurnsAskForSuggestions() async {
+    @Test("Разговор идёт, нажатие одно — подсказка ровно одна")
+    func onlyPressesAskForSuggestions() async {
         let call = SuggestionCall(provider: StubLLMProvider(), recognisesAs: "ага")
 
         call.says(.you)
         call.says(.them)
         call.says(.you)
+        call.engine.suggestBriefly()
         await call.engine.waitForSuggestion()
 
         #expect(call.engine.transcript.map(\.channel) == [.you, .them, .you])
-        #expect(call.engine.suggestions.count == 1, "подсказка ровно одна — на единственную реплику Them")
-        #expect(call.engine.suggestions.first?.promptedBy == call.engine.transcript[1].id)
+        #expect(call.engine.suggestions.count == 1, "три реплики и одно нажатие — это одна подсказка")
+        #expect(call.provider.requests.count == 1)
+    }
+
+    // MARK: - Два жанра
+
+    @Test("Коротко и подробно — это разные промпты и разные бюджеты")
+    func theTwoGenresDifferInPromptAndBudget() async {
+        let call = SuggestionCall(provider: StubLLMProvider(), recognisesAs: "что такое B-tree")
+
+        call.says(.them)
+        call.engine.suggestBriefly()
+        await call.engine.waitForSuggestion()
+        call.engine.suggestInDetail()
+        await call.engine.waitForSuggestion()
+
+        #expect(call.provider.requests.count == 2)
+        let brief = call.provider.requests[0]
+        let detailed = call.provider.requests[1]
+
+        #expect(brief.systemPrompt == BriefPrompt.system(profile: .empty))
+        #expect(brief.maxTokens == BriefPrompt.maxTokens)
+        #expect(detailed.systemPrompt == AssistPrompt.system(profile: .empty))
+        #expect(detailed.maxTokens == AssistPrompt.maxTokens)
+        #expect(
+            brief.maxTokens < detailed.maxTokens,
+            "короткий жанр — это не обрезанный развёрнутый, у него свой потолок"
+        )
+        #expect(
+            brief.userPrompt.contains("Them: что такое B-tree"),
+            "оба жанра отвечают на один и тот же разговор"
+        )
+        #expect(detailed.userPrompt.contains("Them: что такое B-tree"))
     }
 
     // MARK: - Стриминг
@@ -72,7 +128,8 @@ struct SuggestionTriggerTests {
         let call = SuggestionCall(provider: provider, recognisesAs: "оцените сложность решения")
 
         call.says(.them)
-        await call.engine.waitForRecognition()
+        call.engine.suggestBriefly()
+        #expect(await call.modelWasAsked(1))
 
         #expect(call.engine.suggestions.count == 1, "подсказка должна появиться до первого фрагмента")
         #expect(call.engine.suggestions.first?.text.isEmpty == true)
@@ -102,18 +159,20 @@ struct SuggestionTriggerTests {
         )
 
         call.says(.them)
+        call.engine.suggestBriefly()
         await call.engine.waitForSuggestion()
 
         #expect(call.engine.suggestions.count == 1)
         #expect(call.engine.suggestions.first?.state == .failed(LLMFailure.unauthorized.message))
 
-        // Разговор продолжается: следующая реплика собеседника снова просит
-        // подсказку, а не упирается в предыдущий сбой.
+        // Разговор продолжается: следующее нажатие снова просит подсказку, а не
+        // упирается в предыдущий сбой.
         call.says(.them)
+        call.engine.suggestBriefly()
         await call.engine.waitForSuggestion()
 
         #expect(call.engine.transcript.count == 2)
-        #expect(call.engine.suggestions.count == 2, "сбой не должен был остановить цикл")
+        #expect(call.engine.suggestions.count == 2, "сбой не должен был сломать следующее нажатие")
     }
 
     @Test("Ключа нет — в ленте видна причина словами, а не пустая карточка")
@@ -121,6 +180,7 @@ struct SuggestionTriggerTests {
         let call = SuggestionCall(provider: StubLLMProvider(.failure(LLMFailure.missingKey)))
 
         call.says(.them)
+        call.engine.suggestBriefly()
         await call.engine.waitForSuggestion()
 
         guard case .failed(let message) = call.engine.suggestions.first?.state else {
@@ -138,11 +198,12 @@ struct SuggestionTriggerTests {
         let call = SuggestionCall(provider: StubLLMProvider(.fragments(["Готов помочь."])))
 
         call.says(.them)
+        call.engine.suggestBriefly()
         await call.engine.waitForSuggestion()
 
         let request = call.provider.requests.first
-        #expect(request?.userPrompt.contains(AssistPrompt.emptyTranscriptPlaceholder) == true)
-        #expect(request?.maxTokens == AssistPrompt.maxTokens)
+        #expect(request?.userPrompt.contains(BriefPrompt.emptyTranscriptPlaceholder) == true)
+        #expect(request?.maxTokens == BriefPrompt.maxTokens)
         #expect(call.engine.suggestions.first?.text == "Готов помочь.", "подсказка всё равно должна прийти")
         #expect(call.engine.suggestions.first?.state == .complete)
     }
@@ -152,12 +213,13 @@ struct SuggestionTriggerTests {
         let call = SuggestionCall(provider: StubLLMProvider(), recognisesAs: "какой у вас стек")
 
         call.says(.them)
+        call.engine.suggestBriefly()
         await call.engine.waitForSuggestion()
 
         let prompt = call.provider.requests.first?.userPrompt ?? ""
         #expect(prompt.contains("Them: какой у вас стек"))
         #expect(
-            !prompt.contains(AssistPrompt.emptyTranscriptPlaceholder),
+            !prompt.contains(BriefPrompt.emptyTranscriptPlaceholder),
             "подстановка нужна только там, где разговора нет"
         )
     }
@@ -165,7 +227,8 @@ struct SuggestionTriggerTests {
 
 // MARK: - Обстановка звонка
 
-/// A call whose model is a stub: speech goes in, requests and suggestions come out.
+/// A call whose model is a stub: speech goes in, presses go in, requests and
+/// suggestions come out.
 ///
 /// Mirrors `CallFixture`, with the model plugged in — the other suite has no
 /// provider and must keep working without one.
@@ -188,7 +251,7 @@ private struct SuggestionCall {
         self.engine = SessionEngine(
             recognizer: RecognizerSpy(reply: text),
             provider: provider,
-            composer: AssistSuggestionComposer { profile },
+            composer: PromptComposer(profile: { profile }),
             // No screen here: what this suite is about is what starts, cancels
             // and settles a suggestion, and a real screenshot would put a
             // display server and a TCC grant between the test and the answer.
@@ -202,7 +265,7 @@ private struct SuggestionCall {
     /// the turn to close.
     func says(_ channel: Channel, for seconds: TimeInterval = 1.2) {
         feed(seconds: seconds) { AudioFrames.speech(channel: channel, duration: frameLength) }
-        feed(seconds: 0.9) { AudioFrames.silence(channel: channel, duration: frameLength) }
+        feed(seconds: TurnSegmentationConfig.default.pauseThreshold + 0.2) { AudioFrames.silence(channel: channel, duration: frameLength) }
     }
 
     /// Waits until the newest suggestion has grown to `text`.
@@ -211,13 +274,14 @@ private struct SuggestionCall {
     /// instantly; the loop is bounded so a stalled stream fails the test instead
     /// of hanging it.
     func textOfLatestReaches(_ text: String, within timeout: Duration = .seconds(2)) async -> Bool {
-        let deadline = ContinuousClock.now + timeout
-        while ContinuousClock.now < deadline {
-            if engine.suggestions.last?.text == text { return true }
-            await Task.yield()
-            try? await Task.sleep(for: .milliseconds(1))
-        }
-        return false
+        await settling(within: timeout) { engine.suggestions.last?.text == text }
+    }
+
+    /// Waits until the model has been asked `count` times. A press goes through
+    /// the screenshot and the wait for words first, so the request lands a hop
+    /// later rather than instantly.
+    func modelWasAsked(_ count: Int, within timeout: Duration = .seconds(2)) async -> Bool {
+        await settling(within: timeout) { provider.requests.count == count }
     }
 
     private func feed(seconds: TimeInterval, frame: () -> AudioFrame) {
@@ -227,6 +291,18 @@ private struct SuggestionCall {
             engine.ingest(frame())
         }
     }
+}
+
+/// Waits for something that lands on a later turn of the main actor.
+@MainActor
+private func settling(within timeout: Duration, _ condition: () -> Bool) async -> Bool {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if condition() { return true }
+        await Task.yield()
+        try? await Task.sleep(for: .milliseconds(1))
+    }
+    return condition()
 }
 
 // MARK: - Модель-заглушка

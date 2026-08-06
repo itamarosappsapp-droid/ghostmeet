@@ -13,8 +13,8 @@ import Foundation
 ///
 /// 1. **Streaming.** Fragments are yielded the moment they arrive, so the
 ///    suggestion starts appearing while the model is still writing it.
-/// 2. **Real cancellation.** A new `Them` turn cancels the in-flight suggestion
-///    (ADR-0003). Cancelling the consuming task terminates the stream, which
+/// 2. **Real cancellation.** A new press supersedes the suggestion in flight
+///    (ADR-0008). Cancelling the consuming task terminates the stream, which
 ///    cancels the work task, which tears down the HTTP request.
 ///
 /// Everything that differs from Claude — the URL, the header the key rides in,

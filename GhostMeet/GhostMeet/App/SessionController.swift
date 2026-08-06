@@ -104,13 +104,31 @@ final class SessionController {
         suggestions.last?.state == .streaming
     }
 
+    /// Whether a press has been taken and the request is still being put
+    /// together — the tail of the question recognised, the screen grabbed.
+    ///
+    /// Shown for the length of the gap ADR-0008 accepts as the price of pressing:
+    /// a second, sometimes two, in which the window would otherwise look as if
+    /// the chord had not registered.
+    var isPreparingAnswer: Bool { engine.isPreparingAnswer }
+
     /// The reason the last suggestion did not arrive, or `nil`.
     var lastSuggestionFailure: String? {
         guard case .failed(let reason) = suggestions.last?.state else { return nil }
         return reason
     }
 
-    // MARK: - Ручные режимы
+    // MARK: - Что просит пользователь
+
+    /// Жанр «коротко» — the default press (ADR-0008).
+    func suggestBriefly() {
+        engine.suggestBriefly()
+    }
+
+    /// Жанр «подробно».
+    func suggestInDetail() {
+        engine.suggestInDetail()
+    }
 
     /// Answers a question the user typed — mode `Ask`.
     ///
@@ -316,6 +334,12 @@ final class ConversationContext {
 /// It wraps the real composer instead of being one: how many turns a mode reads
 /// and what it says to the model stays in the prompt layer, and "which turns
 /// exist at all" is a question of the session.
+///
+/// One wrapper for every ask, `Ask` included — otherwise the one place a
+/// forgotten turn could still surface would be the very question the user typed
+/// to change the subject. (`Solve on screen` reads no transcript at all, so for
+/// that ask this is a no-op — the right kind: the rule is stated once rather than
+/// per mode.)
 @MainActor
 struct ContextLimitedComposer: SuggestionComposer {
 
@@ -323,37 +347,7 @@ struct ContextLimitedComposer: SuggestionComposer {
     let wrapped: any SuggestionComposer
 
     func compose(
-        transcript: [Turn],
-        screen: ScreenContext,
-        accepting capabilities: ProviderCapabilities
-    ) -> SuggestionRequest {
-        wrapped.compose(
-            transcript: context.remembered(transcript),
-            // The screen is deliberately *not* filtered: it shows what is in
-            // front of the user at this instant, and clearing the conversation
-            // says nothing about it.
-            screen: screen,
-            accepting: capabilities
-        )
-    }
-}
-
-/// The same filter for the modes the user starts by hand.
-///
-/// `Ask` reads the conversation, so clearing the context has to reach it too —
-/// otherwise the one place a forgotten turn could still surface is the very
-/// question the user typed to change the subject. (`Solve on screen` reads no
-/// transcript at all, so for that mode this wrapper is a no-op — which is the
-/// right kind of no-op: the rule is stated once, for every manual mode, rather
-/// than per mode.)
-@MainActor
-struct ContextLimitedManualComposer: ManualComposer {
-
-    let context: ConversationContext
-    let wrapped: any ManualComposer
-
-    func compose(
-        _ ask: ManualAsk,
+        _ ask: SuggestionAsk,
         transcript: [Turn],
         screen: ScreenContext,
         accepting capabilities: ProviderCapabilities
@@ -361,6 +355,9 @@ struct ContextLimitedManualComposer: ManualComposer {
         wrapped.compose(
             ask,
             transcript: context.remembered(transcript),
+            // The screen is deliberately *not* filtered: it shows what is in
+            // front of the user at this instant, and clearing the conversation
+            // says nothing about it.
             screen: screen,
             accepting: capabilities
         )
@@ -447,18 +444,18 @@ extension SessionController {
                 sources: [MicCaptureService(voiceProcessing: voiceProcessing), them],
                 recognizer: recognizer,
                 provider: provider ?? (try? settings.makeProvider()),
-                // The profile is read at request time rather than captured, so
-                // editing it mid-call takes effect on the next suggestion.
+                // The profile and the заготовки to this interview are read at
+                // request time rather than captured, so editing either mid-call
+                // takes effect on the next suggestion. Both live in user-scoped
+                // storage and survive clearing the conversation. All four asks —
+                // both genres, `Ask` and `Solve on screen` — go through this one
+                // composer and obey the same clearing.
                 composer: ContextLimitedComposer(
                     context: context,
-                    wrapped: AssistSuggestionComposer { settings.profile }
-                ),
-                // `Ask` and `Solve on screen` read the same profile and obey the
-                // same clearing, and differ from the loop only in what they are
-                // asked.
-                manualComposer: ContextLimitedManualComposer(
-                    context: context,
-                    wrapped: ManualPromptComposer { settings.profile }
+                    wrapped: PromptComposer(
+                        profile: { settings.profile },
+                        interviewContext: { settings.interviewContext }
+                    )
                 ),
                 config: settings.turnSegmentation
             ),

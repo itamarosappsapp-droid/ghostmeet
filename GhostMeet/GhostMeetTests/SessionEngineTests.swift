@@ -16,31 +16,33 @@ struct SessionEngineTests {
 
     // MARK: - Пауза
 
-    @Test("Говорящий замолчал на 900 мс — реплика закрылась")
+    @Test("Говорящий замолчал на 1,6 с — реплика закрылась")
     func pauseAboveThresholdClosesTurn() {
         let call = CallFixture()
 
         call.someoneSpeaks(for: 1.5)
-        call.silenceLasts(0.9)
+        call.silenceLasts(1.6)
 
         #expect(call.transcript.count == 1)
         #expect(call.transcript.first?.duration.isClose(to: 1.5) == true)
     }
 
-    @Test("Говорящий запнулся на 400 мс — реплика продолжилась, а не разорвалась")
+    @Test("Собеседник задумался на 1,2 с посреди вопроса — вопрос не разорвался")
     func pauseBelowThresholdKeepsTurnOpen() {
         let call = CallFixture()
 
         call.someoneSpeaks(for: 1.0)
-        call.silenceLasts(0.4)
+        call.silenceLasts(1.2)
         call.someoneSpeaks(for: 1.0)
 
         #expect(call.transcript.isEmpty, "реплика ещё не должна была закрыться")
 
-        call.silenceLasts(0.9)
+        call.silenceLasts(1.6)
 
-        #expect(call.transcript.count == 1, "запинка не должна была разрезать речь надвое")
-        #expect(call.transcript.first?.duration.isClose(to: 2.4) == true)
+        // Ровно то, ради чего порог подняли: паузы на границе придаточного идут
+        // 1,0–1,5 с, и на старых 800 мс каждая такая резала вопрос надвое.
+        #expect(call.transcript.count == 1, "пауза на раздумье не должна была разрезать вопрос")
+        #expect(call.transcript.first?.duration.isClose(to: 3.2) == true)
     }
 
     // MARK: - Гейт тишины и минимальная длина
@@ -62,7 +64,7 @@ struct SessionEngineTests {
         let call = CallFixture()
 
         call.someoneSpeaks(for: 0.3)
-        call.silenceLasts(0.9)
+        call.silenceLasts(1.6)
         await call.engine.waitForRecognition()
 
         #expect(call.transcript.isEmpty)
@@ -126,7 +128,7 @@ struct SessionEngineTests {
         let call = CallFixture()
 
         call.someoneSpeaks(for: 1.2, on: .you)
-        call.silenceLasts(0.9, on: .you)
+        call.silenceLasts(1.6, on: .you)
 
         #expect(call.transcript.first?.channel == .you)
     }
@@ -136,9 +138,9 @@ struct SessionEngineTests {
         let call = CallFixture()
 
         call.someoneSpeaks(for: 1.0, on: .them)
-        call.silenceLasts(0.9, on: .them)
+        call.silenceLasts(1.6, on: .them)
         call.someoneSpeaks(for: 1.5, on: .you)
-        call.silenceLasts(0.9, on: .you)
+        call.silenceLasts(1.6, on: .you)
 
         #expect(call.transcript.map(\.channel) == [.them, .you])
         #expect(call.transcript.first?.duration.isClose(to: 1.0) == true)
@@ -152,7 +154,7 @@ struct SessionEngineTests {
         let call = CallFixture(recognisesAs: "расскажите про ваш опыт")
 
         call.someoneSpeaks(for: 1.2)
-        call.silenceLasts(0.9)
+        call.silenceLasts(1.6)
         await call.engine.waitForRecognition()
 
         let requests = await call.recognizer.requests
