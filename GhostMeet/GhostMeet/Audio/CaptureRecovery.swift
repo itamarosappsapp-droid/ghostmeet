@@ -70,9 +70,18 @@ nonisolated final class CaptureRecovery: @unchecked Sendable {
     /// immediate restart fails on a device that is about to be perfectly fine.
     /// The later ones grow so that a device genuinely on its way back — a
     /// headset finishing its handshake — still fits inside the budget, while a
-    /// device that has gone for good is declared lost after ~2 s rather than
-    /// retried for the rest of the call.
-    static let defaultDelays: [TimeInterval] = [0.1, 0.5, 1.5]
+    /// device that has gone for good is declared lost rather than retried for
+    /// the rest of the call.
+    ///
+    /// **The budget was ~2 s and that was too short**, chosen by reasoning where
+    /// the rest of this work was measured. Plugging in a Bluetooth headset makes
+    /// macOS renegotiate the profile before the microphone exists at all, and the
+    /// user hit exactly that: the app stopped hearing them. Six seconds is the
+    /// same shape of guess, but on the safe side of it — the cost of waiting too
+    /// long is a few seconds of a silent `You` channel with the reason on screen,
+    /// while the cost of giving up too early is a microphone declared dead while
+    /// the session still calls itself live.
+    static let defaultDelays: [TimeInterval] = [0.15, 0.4, 1.0, 2.0, 2.5]
 
     /// What a device that never came back is called in the window.
     ///

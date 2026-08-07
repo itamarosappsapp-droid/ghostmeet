@@ -297,3 +297,37 @@ struct MicStatusInSessionTests {
         #expect(controller.failure == .microphoneDenied)
     }
 }
+
+/// Что пользователь увидит вместо голого кода Core Audio.
+///
+/// Живой прогон дал `10868` посреди окна и ничего больше — человек с таким
+/// числом сделать не может ничего. Разбор кодов проверяется здесь, потому что
+/// сам отказ движка воспроизводится только сменой устройства руками.
+@Suite("Отказ микрофона объяснён словами")
+struct MicCaptureErrorTests {
+
+    @Test("Смена устройства объясняется и говорит, что делать")
+    func theDeviceSwitchRefusalIsExplained() {
+        let text = MicCaptureService.CaptureError.engineExplanation(-10868)
+
+        #expect(text.contains("10868"), "код остаётся: по нему ищут в интернете")
+        #expect(text.contains("сменился"), "названа причина, а не только номер")
+        #expect(
+            text.contains("прослушивание"),
+            "названо действие: без него сообщение — это жалоба, а не помощь"
+        )
+    }
+
+    @Test("Незнакомый код не притворяется знакомым")
+    func anUnknownCodeStaysHonest() {
+        let text = MicCaptureService.CaptureError.engineExplanation(-12345)
+
+        #expect(text.contains("-12345"))
+        #expect(!text.contains("наушники"), "не выдумываем причину, которой не знаем")
+    }
+
+    @Test("Отсутствие устройства ввода — отдельный случай")
+    func aMissingInputDeviceIsItsOwnCase() {
+        #expect(MicCaptureService.CaptureError.engineExplanation(-10877).contains("не найдено"))
+    }
+}

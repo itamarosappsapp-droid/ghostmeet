@@ -26,13 +26,40 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
     enum CaptureError: LocalizedError {
         case inputFormatUnavailable
         case converterUnavailable
+        /// The engine refused to start, with whatever Core Audio said.
+        ///
+        /// Wrapped rather than passed through, because what Core Audio says is a
+        /// bare number: the user saw «10868» in the window and it told them
+        /// nothing at all. The codes worth naming are the ones a person can do
+        /// something about.
+        case engineRefused(code: Int)
 
         var errorDescription: String? {
             switch self {
             case .inputFormatUnavailable:
-                return "Микрофон не сообщил формат записи"
+                return "Микрофон не сообщил формат записи — устройство ещё переключается"
             case .converterUnavailable:
                 return "Не удалось подготовить преобразование звука микрофона"
+            case .engineRefused(let code):
+                return Self.engineExplanation(code)
+            }
+        }
+
+        /// What a refusal to start actually means, in words.
+        static func engineExplanation(_ code: Int) -> String {
+            switch code {
+            case -10868:
+                // kAudioUnitErr_FormatNotSupported. Seen live when a headset was
+                // plugged in mid-session: the engine had outlived its device.
+                return "Микрофон сменился, и запись под него не поднялась (\(code)). Выключите и включите прослушивание ещё раз; если наушники только что подключились, дайте им пару секунд"
+            case -10851:
+                // kAudioUnitErr_InvalidPropertyValue.
+                return "Микрофон отдаёт формат, который не удалось принять (\(code))"
+            case -10877:
+                // No input device at all.
+                return "Устройство ввода не найдено (\(code)): проверьте микрофон в «Системных настройках»"
+            default:
+                return "Не удалось запустить запись микрофона (\(code))"
             }
         }
     }
@@ -54,7 +81,20 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
     /// log and invisible to them.
     var onStatusChange: (@Sendable (MicCaptureStatus) -> Void)?
 
-    private let engine = AVAudioEngine()
+    /// The engine of the **current** capture, replaced on every open.
+    ///
+    /// A `let` here was a bug, and it cost the user three symptoms in a row:
+    /// plugging a headset mid-session made the app stop hearing them, and every
+    /// later `start()` failed with `-10868 kAudioUnitErr_FormatNotSupported`
+    /// until the app was relaunched. `AVAudioEngine.inputNode` binds to the
+    /// default input device and caches its format at the moment it is first
+    /// touched; `stop()` does not unbind it and `start()` does not re-read it.
+    /// So once the device underneath has changed, that engine object can never
+    /// start again — the failure belongs to the object, not to the device, which
+    /// is why stopping and starting by hand did not help either.
+    ///
+    /// Guarded by `lock`, because recovery runs on an arbitrary thread.
+    private var engine = AVAudioEngine()
     private let targetFormat: AVAudioFormat
     private let lock = NSLock()
     private var _isRunning = false
@@ -150,10 +190,11 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
             restart: { [weak self] in try self?.openTap() },
             report: { [weak self] status in self?.onStatusChange?(status) }
         )
-        recovery.watch(engine)
         lock.lock()
         self.recovery = recovery
+        let current = engine
         lock.unlock()
+        recovery.watch(current)
 
         onStatusChange?(.capturing)
     }
@@ -171,8 +212,11 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
         // restart running right now takes this one.
         recovery?.stopWatching()
 
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        lock.lock()
+        let current = engine
+        lock.unlock()
+        current.inputNode.removeTap(onBus: 0)
+        current.stop()
         onStatusChange?(.idle)
     }
 
@@ -186,12 +230,24 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
     private func openTap() throws {
         lock.lock()
         let handler = onFrame
+        let previous = engine
         lock.unlock()
         guard let handler else { return }
 
-        let input = engine.inputNode
-        engine.stop()
-        input.removeTap(onBus: 0)
+        // The old engine is retired rather than restarted. See the note on
+        // `engine`: an input node that has outlived its device answers with a
+        // stale format for the rest of its life, and `start()` on it returns
+        // -10868 forever. Building a new one is the only way back, and it is
+        // cheap — an engine with nothing attached is a few objects.
+        previous.inputNode.removeTap(onBus: 0)
+        previous.stop()
+
+        let fresh = AVAudioEngine()
+        lock.lock()
+        engine = fresh
+        lock.unlock()
+
+        let input = fresh.inputNode
 
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
@@ -222,13 +278,21 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
             handler(frame)
         }
 
-        engine.prepare()
+        fresh.prepare()
         do {
-            try engine.start()
+            try fresh.start()
         } catch {
             input.removeTap(onBus: 0)
-            throw error
+            throw CaptureError.engineRefused(code: (error as NSError).code)
         }
+
+        // The subscription follows the engine it belongs to: the notification is
+        // posted with the engine as its object, and a watcher left on the retired
+        // one would never fire again.
+        lock.lock()
+        let recovery = self.recovery
+        lock.unlock()
+        recovery?.watch(fresh)
     }
 
     /// Takes channel 0 of a captured buffer as a mono buffer at the same rate.
