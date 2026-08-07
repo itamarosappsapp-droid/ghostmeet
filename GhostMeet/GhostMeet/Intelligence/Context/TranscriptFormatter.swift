@@ -91,12 +91,19 @@ nonisolated enum TranscriptFormatter {
     /// because losing it would be worse — but a bare `Them:` in the prompt is
     /// noise. They still count as turns of their channel while merging, so a
     /// line the user said that came back empty still separates two questions.
+    ///
+    /// Turns marked as `Протечка канала` are left out **whole**, not merely
+    /// silenced: as far as the conversation goes they never happened, so they do
+    /// not break a run of `Them` either. This is where the mark that `LeakDedup`
+    /// puts on a turn is spent — the model is not told that a line was dropped,
+    /// because "the user said the interviewer's question back" is not a fact
+    /// about the call, it is an artefact of the speakers.
     static func format(
         _ turns: [Turn],
         limit: Int,
         budget: Int = TranscriptFormatter.characterBudget
     ) -> String {
-        let lines = merged(turns)
+        let lines = merged(turns.filter { !$0.isLeak })
         let window = limit > 0 ? Array(lines.suffix(limit)) : lines
         return fitted(window, into: budget)
     }

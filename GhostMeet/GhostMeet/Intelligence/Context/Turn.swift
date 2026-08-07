@@ -33,18 +33,36 @@ nonisolated struct Turn: Identifiable, Hashable, Sendable {
     let timestamp: TimeInterval
     /// Length of the speech in seconds, pauses inside the turn included.
     let duration: TimeInterval
+    /// Whether this is `Протечка канала` rather than speech of its own: a turn of
+    /// `You` whose words are the neighbouring turn of `Them` said again, that is
+    /// the interlocutor coming back out of the speakers.
+    ///
+    /// **Marked and kept, not deleted**, and the reason is the same one that
+    /// makes the decision recomputable at all: the two channels are recognised
+    /// side by side, so the words of `Them` that convict a turn of `You` usually
+    /// arrive after it. Deleting on the spot would mean deciding before the
+    /// evidence, with nothing left to decide again on. What the prompt layer does
+    /// with the mark is a separate question, and `TranscriptFormatter` answers it
+    /// by leaving the line out altogether — the model is never told that a turn
+    /// was dropped, so there is nothing to explain to it.
+    ///
+    /// Set by `LeakDedup` through `SessionEngine`; nothing in the audio layer
+    /// touches it.
+    var isLeak: Bool
 
     init(
         id: UUID = UUID(),
         channel: Channel,
         text: String = "",
         timestamp: TimeInterval,
-        duration: TimeInterval
+        duration: TimeInterval,
+        isLeak: Bool = false
     ) {
         self.id = id
         self.channel = channel
         self.text = text
         self.timestamp = timestamp
         self.duration = duration
+        self.isLeak = isLeak
     }
 }

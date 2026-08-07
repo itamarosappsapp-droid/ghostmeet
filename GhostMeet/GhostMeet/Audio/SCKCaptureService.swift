@@ -12,13 +12,12 @@ import Foundation
 /// The `Them` channel taken with ScreenCaptureKit — the second capture backend
 /// of ADR-0001.
 ///
-/// It exists for a reason narrower than "a spare": the Core Audio process tap
-/// and microphone echo cancellation cannot both run (ADR-0005), and without echo
-/// cancellation the user's own channel collects the other side's voice out of
-/// the speakers. `SCStream` does not build an aggregate device around the output
-/// device, which is what the tap does and what voice processing appears to fight
-/// over — so this backend is the candidate for having both channels honest at
-/// the same time.
+/// It was built when the tap and microphone echo cancellation were believed to
+/// be incompatible (ADR-0005); they are not (ADR-0007), and echo cancellation is
+/// gone from the app altogether (ADR-0009). What kept this backend is a
+/// measurement rather than that story: on one and the same recording `SCStream`
+/// delivers 1.5–2.5× more signal than the tap, and loudness is what recognition
+/// quality hangs on — which is why it is the default (ADR-0006).
 ///
 /// Everything else matches `ProcessTapCaptureService` on purpose: the same
 /// stable-id resolution, the same statuses, the same 16 kHz mono frames, so that

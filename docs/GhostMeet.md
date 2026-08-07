@@ -139,7 +139,7 @@ Them: А почему не Mongo?
 ### Dual-channel пайплайн (по мотивам cue)
 
 1. **Capture**  
-   - You: AVAudioEngine с включённым VPIO (`setVoiceProcessingEnabled`) — системное эхоподавление, чтобы голос собеседника из колонок не протекал в канал `You`  
+   - You: обычный AVAudioEngine, **без VPIO** ([ADR-0009](adr/0009-no-vpio-echo-is-ours-to-handle.md)): системное эхоподавление отнимало 30 дБ у всех прочих процессов, включая браузер со звонком. Протечка динамиков чистится нашими слоями — классификатор маршрута, строгий режим, дедупликация по тексту  
    - Them: Core Audio Process Tap → Aggregate Device → IOProc, либо ScreenCaptureKit — за общим протоколом  
 
 2. **Buffer + gate**  
@@ -208,7 +208,7 @@ Them: А почему не Mongo?
 | UI | SwiftUI + AppKit | — |
 | Always-on-top + hide | `NSWindow` level, `sharingType = .none` | [cue](https://github.com/Blueturboguy07/cue) (`setContentProtection`) |
 | Them audio | ScreenCaptureKit (дефолт) + Core Audio Process Tap | [CallCapture](https://github.com/bodharma/callcapture), [Recap](https://github.com/RecapAI/Recap), [AudioCap](https://github.com/insidegui/AudioCap), [Muesli](https://github.com/Muesli-HQ/muesli) |
-| You audio | AVAudioEngine + VPIO | Scripta, Muesli, стандарт Apple |
+| You audio | AVAudioEngine без VPIO + свои слои от протечки | [Muesli](https://github.com/Muesli-HQ/muesli) (свой AEC на опорном сигнале); [Scripta](https://github.com/thehwang/Scripta) включает VPIO безусловно и побочного эффекта не знает |
 | STT | WhisperKit (CoreML/ANE) + `SpeechAnalyzer` для англ. | [argmax-oss-swift](https://github.com/argmaxinc/argmax-oss-swift) |
 | OCR | Vision Framework | — |
 | LLM | Протокол + URLSession / local HTTP / CLI | идея фабрики как в [cue/src/llm.js](https://github.com/Blueturboguy07/cue/blob/main/src/llm.js) |
@@ -229,7 +229,10 @@ GhostMeet/GhostMeet/          ← синхронизированная груп�
 │   └── AppDefaults.swift         # одноразовые настройки под тестами
 ├── Audio/
 │   ├── AudioSource.swift             # контракт захвата: кадры и канал
-│   ├── MicCaptureService.swift       # You: AVAudioEngine + VPIO
+│   ├── MicCaptureService.swift       # You: AVAudioEngine, без VPIO (ADR-0009)
+│   ├── AudioRoute.swift              # маршрут звука: течёт / не течёт / неизвестно
+│   ├── AudioRouteMonitor.swift       # слежение за сменой устройств на лету
+│   ├── CaptureRecovery.swift         # пережить чужое переключение режима устройства
 │   ├── ThemAudioSource.swift         # контракт канала Them + выбор бэкенда
 │   ├── SwitchableThemSource.swift    # подмена бэкенда на лету
 │   ├── SCKCaptureService.swift       # Them через ScreenCaptureKit (дефолт)
@@ -261,6 +264,7 @@ GhostMeet/GhostMeet/          ← синхронизированная груп�
 │   │   ├── PromptFragments.swift     # общие блоки: экран (OCR), профиль, контекст
 │   │   │                             # собеседования, роды вопросов, произношение,
 │   │   │                             # voice — рамка регистра и пара образцов
+│   │   ├── LeakDedup.swift           # реплика You, совпавшая с одновременной Them, — эхо
 │   │   └── TranscriptFormatter.swift # окно на весь звонок, склейка соседних реплик
 │   ├── LLM/
 │   │   ├── LLMProvider.swift         # контракт: стриминг + отмена
@@ -347,7 +351,8 @@ MVP затачивается под **техническое интервью, �
 ## MVP → v1
 
 ### MVP
-- [ ] Dual-channel: Mic + VPIO (You) + Process Tap (Them) за общим протоколом захвата
+- [ ] Dual-channel: Mic (You) + Process Tap / SCK (Them) за общим протоколом захвата
+- [ ] Защита канала `You` от протечки динамиков без VPIO: маршрут, строгий режим, дедупликация
 - [ ] WhisperKit с выбором модели; нарезка по паузе + RMS gate + страховочный флаш
 - [ ] Transcript You/Them
 - [ ] Один облачный LLM (Claude) + streaming

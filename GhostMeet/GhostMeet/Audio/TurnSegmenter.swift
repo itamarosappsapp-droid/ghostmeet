@@ -89,7 +89,20 @@ nonisolated final class TurnSegmenter {
     private var samples: [Float] = []
     private var sampleRate: Double = 0
     private var startedAt: TimeInterval?
-    private var lastVoiceEndedAt: TimeInterval = 0
+    private var lastVoiceEndedAt: TimeInterval?
+
+    /// Session-clock time of the last frame that was loud enough to count as
+    /// speech, or `nil` while this channel has never been loud.
+    ///
+    /// Deliberately survives the turn it belonged to: what reads it is strict
+    /// mode, which has to keep the `You` channel shut for a moment *after* the
+    /// `Them` turn has closed — the room is still ringing then. Optional rather
+    /// than zero so that "nothing has been heard yet" cannot be mistaken for
+    /// "was heard at the very start of the session".
+    var lastVoiceAt: TimeInterval? { lastVoiceEndedAt }
+
+    /// Whether a `Реплика` is open right now.
+    var hasOpenTurn: Bool { startedAt != nil }
 
     init(channel: Channel, config: TurnSegmentationConfig = .default) {
         self.channel = channel
@@ -119,7 +132,7 @@ nonisolated final class TurnSegmenter {
 
     /// Lets time pass without any audio and closes the turn if it is due.
     func evaluate(at time: TimeInterval) -> CapturedTurn? {
-        guard let startedAt else { return nil }
+        guard let startedAt, let lastVoiceEndedAt else { return nil }
         let silenceSoFar = time - lastVoiceEndedAt
         let lengthSoFar = time - startedAt
         let pauseIsLongEnough = silenceSoFar >= config.pauseThreshold
@@ -151,7 +164,7 @@ nonisolated final class TurnSegmenter {
     func closeIgnoringMinimum() -> CapturedTurn? { close(keepingShortSpeech: true) }
 
     private func close(keepingShortSpeech: Bool) -> CapturedTurn? {
-        guard let startedAt else { return nil }
+        guard let startedAt, let lastVoiceEndedAt else { return nil }
         let duration = lastVoiceEndedAt - startedAt
         let captured = CapturedTurn(
             channel: channel,

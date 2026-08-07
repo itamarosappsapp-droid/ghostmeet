@@ -58,8 +58,18 @@ private struct TurnRow: View {
                 .foregroundStyle(.secondary)
             Text(turn.text.isEmpty ? "—" : turn.text)
                 .font(.body)
-                .foregroundStyle(turn.text.isEmpty ? .secondary : .primary)
+                .foregroundStyle(turn.text.isEmpty || turn.isLeak ? .secondary : .primary)
+                .strikethrough(turn.isLeak)
                 .textSelection(.enabled)
+            if turn.isLeak {
+                // The one place the mark is visible. Without it a leak that the
+                // model never sees would still read here as the user's own
+                // sentence — silent corruption of the transcript, which is the
+                // failure this whole layer exists to prevent.
+                Text("протечка")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

@@ -47,7 +47,7 @@ private final class SilentSource: AudioSource, @unchecked Sendable {
     }
 }
 
-/// A source that cannot start — VPIO unavailable, no input format, device gone.
+/// A source that cannot start — no input format, device gone, device busy.
 private final class RefusingSource: AudioSource, @unchecked Sendable {
     static let reason = "Микрофон занят другим приложением"
 

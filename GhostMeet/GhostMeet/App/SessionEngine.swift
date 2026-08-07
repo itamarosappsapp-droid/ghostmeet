@@ -66,6 +66,48 @@ final class SessionEngine {
     /// "recognition wedged, and the request must still go out".
     static let recognitionBudget: TimeInterval = 4
 
+    /// How long past the last loud `Them` frame the microphone is still assumed
+    /// to be carrying the leak from the speakers.
+    ///
+    /// **0.4 s, and the number was measured rather than chosen.** The leak
+    /// recordings of the ADR-0009 investigation were replayed against the app's
+    /// own silence gate: for 34 phrase endings at full volume and at −12 dB, the
+    /// microphone stayed above the gate for at most **170 ms** after the
+    /// reference went quiet (p95 111 ms, median 10 ms). On top of that come two
+    /// delays the recordings cannot show, because they belong to the app rather
+    /// than to the room: a frame is 85 ms long, so the last loud `Them` frame is
+    /// timestamped up to a frame late; and `Them` and the microphone arrive
+    /// through different capture paths with buffers of their own. 170 + 85 + a
+    /// comparable allowance for the second is 0.4 s.
+    ///
+    /// Being generous costs the opening of an answer the user starts inside that
+    /// window; being stingy costs a whole `Реплика` of the interlocutor's voice
+    /// filed under `You`, which is the failure that breaks the one guarantee the
+    /// product has. Do not shrink it without measuring both capture paths.
+    ///
+    /// The same physical fact is read a second time by the layer below —
+    /// `LeakDedup.neighbourhood`, which decides how far apart two `Реплики` may
+    /// be and still be the same speech. A test keeps the two equal.
+    static let echoTail: TimeInterval = 0.4
+
+    /// Whether the current audio route lets `Them` out of the speakers and back
+    /// into the microphone — the only configuration strict mode is right in.
+    ///
+    /// Answered by `AudioRouteMonitor`, which `SessionController.follow(route:)`
+    /// plugs in here. The default stays «да, опасная» and is the value in force
+    /// whenever nobody has plugged anything in — a session built for a test, or a
+    /// monitor that has gone away. That is the safe side of the two: a user in
+    /// headphones loses the first fraction of a second of an answer they started
+    /// on top of the interlocutor, while a user on speakers who is wrongly
+    /// trusted gets the interlocutor's voice written down as their own. The
+    /// classifier obeys the same asymmetry — only a positively identified safe
+    /// route answers `false`, «неизвестно» does not.
+    ///
+    /// A closure rather than a `Bool` because the route changes mid-call —
+    /// headphones go in, the output device switches — and a value captured at
+    /// composition time would be a lie by the second question.
+    @ObservationIgnored var isLeakyRoute: () -> Bool = { true }
+
     private let clock: SessionClock
 
     /// Lifecycle of capture only — which sources came up, and what stopped them.
@@ -211,9 +253,44 @@ final class SessionEngine {
     /// it, and never from what was said.
     func ingest(_ frame: AudioFrame) {
         guard let segmenter = segmenters[frame.channel] else { return }
-        if let captured = segmenter.accept(frame, at: clock.now) {
+        let now = clock.now
+        guard !isLeakFromSpeakers(frame, at: now) else { return }
+        if let captured = segmenter.accept(frame, at: now) {
             append(captured)
         }
+    }
+
+    /// Whether this microphone frame is the interlocutor coming back out of the
+    /// speakers rather than the user talking — строгий режим.
+    ///
+    /// The cheapest of the three layers ADR-0009 lists, and the reasoning is one
+    /// sentence: if the interlocutor is speaking *right now*, then whatever the
+    /// microphone is picking up is them. Without a defence the measurement is
+    /// brutal — 17.8 seconds of a 19-second question land in `You` as the user's
+    /// own speech.
+    ///
+    /// Three conditions, and each one is a promise:
+    ///
+    /// *Only in a leaky route.* In headphones there is nothing to leak, and the
+    /// mode would cost interruptions for nothing.
+    ///
+    /// *Only while no `Реплика` of `You` is open.* The user may have started
+    /// before the interlocutor did; cutting their sentence in half mid-word
+    /// would corrupt the transcript in the other direction. The price of that
+    /// choice is stated plainly: a turn the user starts **on top of** the
+    /// interlocutor is lost whole. Measured, that is the safe half of the
+    /// trade — on speakers the leak is louder than the user's own voice — and it
+    /// is the reason this cannot be the only layer.
+    ///
+    /// *Only within `echoTail` of the last loud `Them` frame*, decided by the
+    /// very gate that cuts `Them` into turns rather than by a threshold of its
+    /// own. Two gates would drift apart on the first edit, and the question
+    /// «звучит ли Them» has exactly one right answer per session.
+    private func isLeakFromSpeakers(_ frame: AudioFrame, at now: TimeInterval) -> Bool {
+        guard frame.channel == .you, isLeakyRoute() else { return false }
+        guard segmenters[.you]?.hasOpenTurn == false else { return false }
+        guard let themVoiceAt = segmenters[.them]?.lastVoiceAt else { return false }
+        return now - themVoiceAt <= Self.echoTail
     }
 
     /// Lets time pass without new audio: a turn still closes on its pause or on
@@ -223,6 +300,23 @@ final class SessionEngine {
         for channel in Channel.allCases {
             if let captured = segmenters[channel]?.evaluate(at: now) { append(captured) }
         }
+    }
+
+    /// Says that a source stopped delivering audio for a moment — the input
+    /// device changed under it and capture is being brought back.
+    ///
+    /// The open `Реплика` of that channel is closed here rather than left to the
+    /// pause threshold, and the minimum length is deliberately skipped. A restart
+    /// takes a device round trip, so what is open is a sentence with a hole
+    /// punched in it; closing it now means the two halves reach the transcript as
+    /// two `Реплики` — which `TranscriptFormatter` puts back together at prompt
+    /// time — instead of one turn that silently straddles the gap. Skipping the
+    /// minimum is the same reason `closeIgnoringMinimum()` exists for a press:
+    /// the words were cut short by us, not by the speaker, and a short fragment
+    /// of real speech is not a cough.
+    func sourceInterrupted(_ channel: Channel) {
+        guard let captured = segmenters[channel]?.closeIgnoringMinimum() else { return }
+        append(captured)
     }
 
     /// Waits for the recognition already started for closed turns.
@@ -312,6 +406,38 @@ final class SessionEngine {
     private func apply(text: String, to id: Turn.ID) {
         guard !text.isEmpty, let index = transcript.firstIndex(where: { $0.id == id }) else { return }
         transcript[index].text = text
+        refreshLeakMarks(around: transcript[index])
+    }
+
+    /// Re-decides which turns of `You` are `Протечка канала` now that one more
+    /// turn has words — дедупликация по тексту, the second layer of ADR-0009.
+    ///
+    /// Run on every recognised turn rather than once when the turn itself is
+    /// recognised, because the two channels are recognised side by side and
+    /// finish in whatever order they finish: the words of `Them` that convict a
+    /// turn of `You` arrive after it as often as before it. `LeakDedup.isLeak` is
+    /// pure and idempotent precisely so that this can be re-run instead of
+    /// latched.
+    ///
+    /// Bounded to the turns the new words could possibly have changed — the turn
+    /// itself when it is `You`, its neighbours when it is `Them` — so this stays
+    /// a handful of comparisons per recognised turn however long the call gets.
+    private func refreshLeakMarks(around changed: Turn) {
+        let affected: [Turn.ID] = switch changed.channel {
+        case .you:
+            [changed.id]
+        case .them:
+            transcript
+                .filter { $0.channel == .you && LeakDedup.overlap($0, changed) }
+                .map(\.id)
+        }
+
+        for id in affected {
+            guard let index = transcript.firstIndex(where: { $0.id == id }) else { continue }
+            let verdict = LeakDedup.isLeak(transcript[index], among: transcript)
+            guard transcript[index].isLeak != verdict else { continue }
+            transcript[index].isLeak = verdict
+        }
     }
 
     // MARK: - Что просит пользователь

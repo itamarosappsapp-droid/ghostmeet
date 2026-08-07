@@ -50,6 +50,7 @@ struct ContentView: View {
             Divider().opacity(0.4)
             recognitionNotice
             failureNotice
+            routeNotice
             themNotice
             preparationNotice
             suggestions
@@ -263,6 +264,67 @@ struct ContentView: View {
             string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
         ) else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    // MARK: - Маршрут звука
+
+    /// Which way the sound goes, said only when it is worth saying.
+    ///
+    /// This is the visible half of ADR-0009. With voice processing gone, the
+    /// configuration «встроенный микрофон + динамики» writes the interviewer's
+    /// voice into the `You` channel — 17.8 seconds of a 19-second question,
+    /// measured — and the two cleaning layers below take out most of it but not
+    /// all. Headphones fix it completely, and that is a sentence the user can act
+    /// on in five seconds. Saying nothing would be the same silent corruption of
+    /// the transcript the project has already been bitten by twice.
+    ///
+    /// **A line of its own, not a fourth field in the readiness strip.** That
+    /// strip carries three fields across 420 points and truncates already; a
+    /// fourth would push the profile off the line to state something that is
+    /// usually not worth stating at all. This appears only when there is
+    /// something to say and takes no room the rest of the time.
+    ///
+    /// The two uncertain-versus-certain cases are said differently on purpose. A
+    /// certain leak stays up during the call, because headphones can be put on
+    /// mid-call and because the transcript is being corrupted right now. An
+    /// unclassifiable route — a Bluetooth headset, an aggregate, a virtual
+    /// device: three of the four output devices on the bench — is stated **only
+    /// before the call**. It is a question, not a diagnosis, and a question
+    /// hanging over the suggestion feed for an hour would be the nagging kind of
+    /// honesty that gets ignored.
+    ///
+    /// Suppressed while a capture failure is on screen: a warning about speakers
+    /// above «нет доступа к микрофону» is noise on top of the thing that has to
+    /// be read.
+    @ViewBuilder
+    private var routeNotice: some View {
+        if session.failure == nil, let route = session.audioRoute, let notice = route.notice {
+            if route.isCertainlyLeaky {
+                Label {
+                    Text(notice)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "speaker.wave.2.fill")
+                }
+                .font(.system(size: 11))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.yellow.opacity(0.12))
+            } else if !session.isListening {
+                Label {
+                    Text(notice)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "questionmark.circle")
+                }
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+            }
+        }
     }
 
     // MARK: - The Them channel

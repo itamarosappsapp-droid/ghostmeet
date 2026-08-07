@@ -468,27 +468,8 @@ struct ThemCaptureBackendSettingsTests {
         )
     }
 
-    @Test("Эхоподавление не выключается ни под одним бэкендом канала Them")
-    func voiceProcessingIsNeverSacrificed() {
-        withTemporaryDefaults { defaults in
-            let store = SettingsStore(defaults: defaults, secrets: InMemorySecretStore())
-            #expect(store.allowsVoiceProcessing, "без выбранного источника нечего и глушить")
-
-            // Одно время эхоподавление выключалось под тапом: считалось, что они
-            // несовместимы. Тишина оказалась нашей ошибкой работы с памятью, а не
-            // ограничением системы, поэтому защита от протечки канала безусловна —
-            // см. отменённый ADR-0005. Тест сторожит, чтобы жертва не вернулась.
-            store.themSourceApplicationID = "com.google.Chrome"
-            #expect(
-                store.allowsVoiceProcessing,
-                "тап и эхоподавление работают вместе — жертвовать защитой незачем"
-            )
-
-            store.themCaptureBackend = .screenCaptureKit
-            #expect(
-                store.allowsVoiceProcessing,
-                "и со вторым бэкендом тоже"
-            )
-        }
-    }
+    // Тест «эхоподавление не выключается ни под одним бэкендом» жил здесь и
+    // удалён вместе со свойством, которое он сторожил: с ADR-0009 системное
+    // эхоподавление не включается вообще, ни под каким бэкендом. Сторожит это
+    // теперь `VoiceProcessingOffTests`.
 }

@@ -165,15 +165,12 @@ final class SettingsStore {
         didSet { defaults.set(themCaptureBackend.rawValue, forKey: DefaultsKey.themCaptureBackend) }
     }
 
-    /// Whether the microphone keeps its echo cancellation on.
-    ///
-    /// Always true. It was briefly conditional, on the belief that voice
-    /// processing silenced the process tap; the silence turned out to be a
-    /// memory bug of ours, and the defence against channel leak is unconditional
-    /// again — see the cancelled ADR-0005. Kept as a property because the
-    /// composition root already reads it, and because a future backend may yet
-    /// have a real reason to ask.
-    var allowsVoiceProcessing: Bool { true }
+    // There is no `allowsVoiceProcessing` here any more, and its absence is a
+    // decision rather than a tidy-up. ADR-0007 left it as an extension point «на
+    // случай настоящей причины»; ADR-0009 measured the reason and it turned out
+    // to point the other way — system voice processing costs every *other*
+    // process on the machine 28–32 dB, the browser holding the call included. So
+    // there is no backend, and no setting, under which it may come back on.
 
     /// Which chord runs which global action.
     ///

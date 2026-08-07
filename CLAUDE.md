@@ -8,9 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-The MVP pipeline runs end to end: both channels are captured, turns are cut on pauses, speech is recognised locally into a live transcript — and a suggestion is generated when the user presses a chord, never on its own. **545 tests** across 76 suites (Swift Testing, target `GhostMeetTests`).
+The MVP pipeline runs end to end: both channels are captured, turns are cut on pauses, speech is recognised locally into a live transcript — and a suggestion is generated when the user presses a chord, never on its own. **609 tests** across 86 suites (Swift Testing, target `GhostMeetTests`).
 
-Done: project skeleton and test target, microphone capture with VPIO, turn segmentation, WhisperKit recognition with model selection, the overlay window, the `Them` channel (both backends, SCK by default), settings with per-provider keys, the full provider router (OpenAI-compatible family, Gemini, CLI tools) with streaming, screenshot and OCR on every request, the press-driven suggestion lifecycle (a new press supersedes the answer in flight), two genres of suggestion plus `Ask` and `Solve on screen`, global hotkeys and per-channel indicators, several named profiles with one selected per call and filled in either by hand or from a resume, the `Контекст собеседования` beside them, the readiness strip in the overlay header, and markup in the suggestion card.
+Done: project skeleton and test target, microphone capture, turn segmentation, WhisperKit recognition with model selection, the overlay window, the `Them` channel (both backends, SCK by default), settings with per-provider keys, the full provider router (OpenAI-compatible family, Gemini, CLI tools) with streaming, screenshot and OCR on every request, the press-driven suggestion lifecycle (a new press supersedes the answer in flight), two genres of suggestion plus `Ask` and `Solve on screen`, global hotkeys and per-channel indicators, several named profiles with one selected per call and filled in either by hand or from a resume, the `Контекст собеседования` beside them, the readiness strip in the overlay header, and markup in the suggestion card.
 
 Two ticket sets are done and awaiting human review: `.scratch/interview-mvp/` (the original MVP) and `.scratch/hotkey-first/` (the switch to hotkey-triggered suggestions and three ideas taken from cue — question kinds inside the prompt, interview context above the profile, markup in the card). What is left is the v1.0 list in [docs/GhostMeet.md](docs/GhostMeet.md). The background Summarizer is **deliberately not** on the critical path any more: a whole interview is ~10k tokens and fits in one request, so `{{#if summary}}` stays present and empty until a use case longer than an interview appears.
 
@@ -81,7 +81,7 @@ Two independent bugs in this project produced *identical* symptoms — capture r
 
 The lesson generalises: **in this codebase, never trust a reported audio format — measure what actually arrived.** When audio "doesn't work", the first move is to log frame counts, RMS and buffer layout; return codes will tell you nothing. `MicChannelExtractionTests` guards the first case.
 
-VPIO also **ducks all other system audio** while capturing, which both annoys the user and quietens the very audio `Them` is trying to recognise. Set `voiceProcessingOtherAudioDuckingConfiguration` to `.min`.
+VPIO also **ducks all other system audio** while capturing, and quietens the very audio `Them` is trying to recognise — `voiceProcessingOtherAudioDuckingConfiguration = .min` was the fix. None of this is live any more (ADR-0009 turned VPIO off), and it is written down because the multi-channel trap it caused is *not* gone: any other application can put the device into that mode, and the mic tap must survive it.
 
 ### Permissions and TCC
 
@@ -129,7 +129,7 @@ A macOS always-on-top overlay that assists during video calls (Meet, Telemost, Z
 Design decisions from the grilling session are recorded, not just implied by the code — read them before reopening a settled question:
 
 - [CONTEXT.md](CONTEXT.md) — the glossary. `You`, `Them`, `Реплика`, `Подсказка`, `Профиль` have precise definitions; use those words and don't drift to synonyms.
-- [docs/adr/](docs/adr/) — [0001](docs/adr/0001-swappable-backends-behind-protocols.md) swappable backends, [0002](docs/adr/0002-stt-engine-choice.md) STT engine choice, [0004](docs/adr/0004-invisibility-scope.md) the limits of invisibility, [0006](docs/adr/0006-screencapturekit-default-for-them.md) SCK as the default `Them` backend, [0008](docs/adr/0008-hotkey-triggered-suggestions.md) suggestions on a hotkey. Two are superseded and stay in the directory for the reasoning they carry: [0003](docs/adr/0003-proactive-suggestion-loop.md) (the proactive loop, by 0008) and [0005](docs/adr/0005-vpio-and-process-tap-cannot-coexist.md) (by [0007](docs/adr/0007-vpio-and-process-tap-do-coexist.md)).
+- [docs/adr/](docs/adr/) — [0001](docs/adr/0001-swappable-backends-behind-protocols.md) swappable backends, [0002](docs/adr/0002-stt-engine-choice.md) STT engine choice, [0004](docs/adr/0004-invisibility-scope.md) the limits of invisibility, [0006](docs/adr/0006-screencapturekit-default-for-them.md) SCK as the default `Them` backend, [0008](docs/adr/0008-hotkey-triggered-suggestions.md) suggestions on a hotkey, [0009](docs/adr/0009-no-vpio-echo-is-ours-to-handle.md) no VPIO, ever. Superseded ones stay in the directory for the reasoning they carry: [0003](docs/adr/0003-proactive-suggestion-loop.md) (by 0008), [0005](docs/adr/0005-vpio-and-process-tap-cannot-coexist.md) (by [0007](docs/adr/0007-vpio-and-process-tap-do-coexist.md)), and 0007 in its «VPIO always on» half (by 0009 — the rest of it still holds).
 
 The spec in `docs/` has been reconciled with these; where an older reference project (cue) disagrees, the ADRs win.
 
@@ -137,7 +137,11 @@ The spec in `docs/` has been reconciled with these; where an older reference pro
 
 These are the decisions that shape everything else; changing one has ripple effects across the codebase.
 
-**Two channels never mix.** `You` (user mic, AVAudioEngine **with VPIO enabled**) and `Them` (call participants, captured from the source app) each get their own buffer, their own independent STT pass, and their own label in the transcript. Channel membership is decided by *source*, never by meaning: everything from the mic is `You` even when the user reads someone else's question aloud. VPIO (`setVoiceProcessingEnabled`) is what stops the other party's voice leaking from the speakers into `You` — without it the transcript quietly corrupts and the LLM starts answering the wrong side.
+**Two channels never mix.** `You` (user mic, plain AVAudioEngine) and `Them` (call participants, captured from the source app) each get their own buffer, their own independent STT pass, and their own label in the transcript. Channel membership is decided by *source*, never by meaning: everything from the mic is `You` even when the user reads someone else's question aloud.
+
+**VPIO is never enabled** ([ADR-0009](docs/adr/0009-no-vpio-echo-is-ours-to-handle.md), which supersedes the «always on» half of [ADR-0007](docs/adr/0007-vpio-and-process-tap-do-coexist.md)). It used to be what stopped the interlocutor's voice leaking from the speakers into `You` — and it worked — but `setVoiceProcessingEnabled(true)` switches the *device* into its multi-channel mode, and every **other** process reading the built-in mic then loses 28–32 dB. Chrome is one of them: it takes the raw stream and does its own processing, so a browser call — the target scenario — has the candidate arriving at the interviewer 31 dB quieter, and the candidate never finds out. The cost is charged to a process that did not ask for it, which is what makes it unusable here, not the feature itself.
+
+What replaces it is ours and layered: a route classifier decides whether the built-in mic can hear the built-in speakers at all, strict mode refuses to open a `You` turn while `Them` is sounding, and `LeakDedup` marks a `You` turn whose words match a simultaneous `Them` turn. Read ADR-0009 before re-enabling anything: the obvious workarounds (bypass, another device, short bursts) are all measured and all fail.
 
 **Two implementations per external seam.** Capture, STT and LLM each have two or more backends behind one protocol, selectable in settings — see [ADR-0001](docs/adr/0001-swappable-backends-behind-protocols.md). Branching must not leak upward: `Speech` doesn't know where the audio came from, `Intelligence` doesn't know what transcribed it. Backends are built **one at a time** through the seam, not in parallel.
 
@@ -155,7 +159,7 @@ The resume file itself is never stored — not on disk, not in `UserDefaults`, n
 
 ### Audio → answer pipeline
 
-1. **Capture** — mic via AVAudioEngine + VPIO; `Them` via Process Tap → Aggregate Device → IOProc (or SCK)
+1. **Capture** — mic via plain AVAudioEngine (no VPIO — ADR-0009); `Them` via Process Tap → Aggregate Device → IOProc (or SCK). Both survive a device-mode switch made by somebody else: `CaptureRecovery` listens for `AVAudioEngineConfigurationChange` and reopens the tap, because now that we no longer switch the mode, anyone else can — Phone, WhatsApp, Teams — and without the subscription the microphone dies silently
 2. **Buffer + gate** — separate `you`/`them` PCM queues; a turn closes after **1.5 s** of silence, with a minimum length (~0.6 s), an RMS silence gate, and a ~10 s forced flush for pause-less monologues. The threshold used to be 800 ms because every extra 100 ms was 100 ms before the first token; with ADR-0008 it is no longer part of any latency budget, and the higher value is what stops a long question arriving in three pieces. **Do not lower it back on latency grounds**
 3. **STT** — WhisperKit per channel, independently
 4. **Transcript** — append `Turn { channel, text, timestamp }`

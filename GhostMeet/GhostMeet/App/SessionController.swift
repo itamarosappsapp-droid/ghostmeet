@@ -27,6 +27,24 @@ final class SessionController {
     /// A start is in flight — the system permission dialog may be up.
     private(set) var isStarting = false
 
+    /// What microphone capture is doing, in the capture layer's own words.
+    ///
+    /// Here for the same reason `themStatus` is: capture publishes it from an
+    /// arbitrary thread and the overlay reads it on the main actor.
+    var micStatus: MicCaptureStatus = .idle
+
+    /// Which way the sound goes, or `nil` when nobody has classified it.
+    ///
+    /// `nil` is not «неизвестно» — that is a verdict of its own, and it has
+    /// wording. `nil` means no classifier is attached at all: a session built for
+    /// a test or a preview, which must not put a warning about speakers into a
+    /// window that has no sound hardware behind it.
+    var audioRoute: AudioRoute?
+
+    /// The classifier itself, held for the life of the session so its
+    /// subscription outlives `dualChannel(...)`.
+    @ObservationIgnored private var routeMonitor: AudioRouteMonitor?
+
     /// What the `Them` channel is doing, in the channel's own words.
     ///
     /// Kept here rather than read off the source, because the source publishes it
@@ -235,6 +253,64 @@ final class SessionController {
         engine.stop()
     }
 
+    /// Takes one report from microphone capture.
+    ///
+    /// Three of the four cases do something, and each is a different promise the
+    /// ticket makes. A restart closes the `Реплика` that was open, so a device
+    /// switch never swallows half a sentence without saying so. A capture that
+    /// came back clears the failure it left in the window — a sentence about a
+    /// microphone that is working again would be worse than none. And a device
+    /// that never came back becomes the same `failure` a refused microphone
+    /// does: inside the window, next to the `You` indicator, never a system
+    /// banner (ADR-0004).
+    @MainActor
+    func apply(micStatus status: MicCaptureStatus) {
+        micStatus = status
+        switch status {
+        case .restarting:
+            engine.sourceInterrupted(.you)
+        case .capturing:
+            if case .captureFailed = failure { failure = nil }
+        case .lost(let reason):
+            failure = .captureFailed(reason)
+        case .idle:
+            break
+        }
+    }
+
+    // MARK: - Маршрут звука
+
+    /// Attaches a route classifier: the window starts saying which way the sound
+    /// goes, and strict mode starts believing it.
+    ///
+    /// Two consumers, one source. The window gets a wording; the audio layer gets
+    /// a `Bool` through `SessionEngine.isLeakyRoute`, read on every `You` frame —
+    /// which is why the closure asks the monitor for its cached verdict rather
+    /// than classifying anything itself.
+    ///
+    /// The fallback in that closure is `true`, and it is the same safe side the
+    /// seam shipped with: a monitor that has gone away is not evidence of
+    /// headphones.
+    @MainActor
+    func follow(route monitor: AudioRouteMonitor) {
+        routeMonitor = monitor
+        engine.isLeakyRoute = { [weak monitor] in monitor?.mayLeak ?? true }
+        monitor.onChange { [weak self] route in
+            Logger(subsystem: "Mixxy.GhostMeet", category: "capture")
+                .info("МАРШРУТ ЗВУКА: \(route.summary, privacy: .public)")
+            // Core Audio posts from its own queue; the overlay reads this on the
+            // main actor. The same hop the two capture channels make.
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.audioRoute = route }
+            }
+        }
+        monitor.start()
+        // `start()` publishes only a *change*, and the first reading is not one
+        // when it happens to equal the unread value. Taking it directly is what
+        // makes the window right from the first redraw.
+        audioRoute = monitor.route
+    }
+
     // MARK: - Thresholds
 
     /// Keeps the engine's thresholds equal to what the settings screen shows.
@@ -373,7 +449,8 @@ extension SessionController {
     enum Failure: Equatable {
         /// The system refused microphone access, or the user did.
         case microphoneDenied
-        /// Capture itself failed to start — VPIO unavailable, no input format.
+        /// Capture itself failed to start, or stopped and would not come back —
+        /// no input format, or an input device that went away for good.
         case captureFailed(String)
 
         var message: String {
@@ -419,17 +496,17 @@ extension SessionController {
         isRecognitionReady: @escaping () -> Bool = { true },
         provider: (any LLMProvider)? = nil
     ) -> SessionController {
-        // Which backend feeds `Them` decides whether the microphone may keep its
-        // echo cancellation: voice processing and the Core Audio process tap
-        // cannot both run (ADR-0005). ScreenCaptureKit does not build an
-        // aggregate device around the output device — the suspected cause — so
-        // with that backend the defence stays on. `SettingsStore` owns the rule.
-        let voiceProcessing = settings.allowsVoiceProcessing
+        // The microphone takes no argument about echo cancellation any more:
+        // system voice processing is never switched on, whichever backend feeds
+        // `Them` (ADR-0009). The leak from the speakers is cleaned on our side
+        // instead.
 
         // One source for the whole life of the engine, with the real backend
         // swapped inside it. Which of the two it is stays a setting the user can
         // change mid-call: they fail on different machines, and a choice that
         // needed a relaunch would be made blind, once, and never revisited.
+        let mic = MicCaptureService()
+
         let them = SwitchableThemSource(backend: settings.themCaptureBackend)
         them.followSourceSelection(of: settings)
         them.followCaptureBackend(of: settings)
@@ -441,7 +518,7 @@ extension SessionController {
 
         let controller = SessionController(
             engine: SessionEngine(
-                sources: [MicCaptureService(voiceProcessing: voiceProcessing), them],
+                sources: [mic, them],
                 recognizer: recognizer,
                 provider: provider ?? (try? settings.makeProvider()),
                 // The profile and the заготовки to this interview are read at
@@ -462,6 +539,24 @@ extension SessionController {
             isRecognitionReady: isRecognitionReady,
             context: context
         )
+
+        // Which way the sound goes. Attached here rather than inside the engine
+        // because it feeds two different consumers — the window and strict mode —
+        // and this is the one place that knows about both.
+        controller.follow(route: AudioRouteMonitor())
+
+        // The microphone says the same kind of thing the `Them` side does, and
+        // it became worth saying with ADR-0009: we no longer switch the input
+        // device's mode ourselves, so the next process that does it can stop our
+        // capture dead. What used to be impossible is now somebody else's
+        // ordinary behaviour, and it has to be visible.
+        mic.onStatusChange = { [weak controller] status in
+            Logger(subsystem: "Mixxy.GhostMeet", category: "capture")
+                .info("КАНАЛ YOU: \(status.message, privacy: .public)")
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { controller?.apply(micStatus: status) }
+            }
+        }
 
         // The `Them` side says why it is quiet here and only here. It goes two
         // ways, both of them inside the app: into the overlay, which is where the

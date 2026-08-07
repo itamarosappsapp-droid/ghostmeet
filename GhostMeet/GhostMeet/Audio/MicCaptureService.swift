@@ -10,23 +10,25 @@ import Foundation
 
 /// Microphone capture: the source of the `You` channel.
 ///
-/// Voice processing (VPIO) is the defence against channel leak — `Them` coming
-/// out of the speakers and being caught by the microphone. It is **not** always
-/// on, because it cannot be: enabling it silences the process tap that feeds the
-/// `Them` channel (see ADR-0005). Whoever builds this service decides, and the
-/// rule is in `SessionController.dualChannel`.
+/// **Voice processing (VPIO) is never switched on here** (ADR-0009). It used to
+/// be the defence against channel leak — `Them` coming out of the speakers and
+/// caught by the microphone — and it worked; the trouble is who pays for it.
+/// `setVoiceProcessingEnabled(true)` switches the mode of the *device*, not of
+/// our stream, and in that mode **every other process** on the machine gets the
+/// built-in microphone 28–32 dB quieter. The browser holding the call is one of
+/// those processes, and it does not use system VPIO, so the interviewer simply
+/// stops hearing the candidate — a failure nobody in this app can see. The leak
+/// is ours to clean up instead.
+///
+/// What the leak costs and how it is cleaned is in ADR-0009; nothing about it
+/// lives in this type, which now just captures.
 nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
     enum CaptureError: LocalizedError {
-        case voiceProcessingUnavailable(Error)
         case inputFormatUnavailable
         case converterUnavailable
 
         var errorDescription: String? {
             switch self {
-            case .voiceProcessingUnavailable:
-                // Without VPIO the user's channel would collect the other side's
-                // voice, so capture refuses to start rather than leak.
-                return "Не удалось включить подавление эха на микрофоне"
             case .inputFormatUnavailable:
                 return "Микрофон не сообщил формат записи"
             case .converterUnavailable:
@@ -36,25 +38,39 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
     }
 
     let channel: Channel = .you
-    private(set) var isRunning = false
+
+    var isRunning: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return _isRunning
+    }
+
+    /// Called whenever capture changes what it is doing, on an arbitrary thread.
+    ///
+    /// The same seam `ThemAudioSource` has, and for the same reason: a channel
+    /// that has gone quiet must be able to say so inside the window. Without it
+    /// the one failure the user cannot hear — their own microphone dying because
+    /// another application switched the device — would be visible to us in the
+    /// log and invisible to them.
+    var onStatusChange: (@Sendable (MicCaptureStatus) -> Void)?
 
     private let engine = AVAudioEngine()
     private let targetFormat: AVAudioFormat
-
-    /// Whether echo cancellation is switched on for this capture.
-    ///
-    /// Off while the `Them` channel is tapping an application: VPIO takes over
-    /// the machine's audio path and hands the tap pure silence. With it off the
-    /// user needs headphones, or their own channel collects the other side's
-    /// voice (ADR-0005).
-    private let voiceProcessingEnabled: Bool
+    private let lock = NSLock()
+    private var _isRunning = false
+    /// Kept for the whole life of a capture, because a restart has to re-install
+    /// the tap around the very same handler.
+    private var onFrame: AudioFrameHandler?
+    private var recovery: CaptureRecovery?
+    private let restartDelays: [TimeInterval]
 
     /// Holds the converter for whatever format the tap turns out to deliver.
     ///
-    /// Built on the first buffer instead of up front: the format a voice-processed
-    /// input node reports and the one it delivers are not always the same, and the
-    /// buffer is the only source of truth. Rebuilt if the format ever changes
-    /// under us — switching the input device mid-call does that.
+    /// Built on the first buffer instead of up front: the format an input node
+    /// reports and the one it delivers are not always the same, and the buffer is
+    /// the only source of truth. Rebuilt if the format ever changes under us —
+    /// somebody else switching the input device's mode mid-call does that, and
+    /// since ADR-0009 that somebody is never us.
     private final class ConverterBox: @unchecked Sendable {
         private var converter: AVAudioConverter?
         private var sourceFormat: AVAudioFormat?
@@ -70,8 +86,19 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
 
     /// - Parameter sampleRate: rate the frames are delivered at. 16 kHz mono is
     ///   what speech recognition wants, and it keeps the buffers small.
-    init(sampleRate: Double = 16_000, voiceProcessing: Bool = true) {
-        voiceProcessingEnabled = voiceProcessing
+    ///
+    /// There is deliberately **no** voice-processing knob. A flag that is always
+    /// false is a promise that it might one day be true, and ADR-0009 closed that
+    /// question by measurement rather than by taste: the cost is charged to other
+    /// processes, so there is no configuration in which switching it on is right.
+    /// - Parameter restartDelays: how long to wait before each attempt to bring
+    ///   capture back after somebody else changed the device, and how many
+    ///   attempts there are. A parameter so a test does not sit through them.
+    init(
+        sampleRate: Double = 16_000,
+        restartDelays: [TimeInterval] = CaptureRecovery.defaultDelays
+    ) {
+        self.restartDelays = restartDelays
         targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: sampleRate,
@@ -96,29 +123,75 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
     }
 
     func start(onFrame: @escaping AudioFrameHandler) throws {
-        guard !isRunning else { return }
+        lock.lock()
+        guard !_isRunning else { lock.unlock(); return }
+        self.onFrame = onFrame
+        lock.unlock()
+
+        do {
+            try openTap()
+        } catch {
+            lock.lock()
+            self.onFrame = nil
+            lock.unlock()
+            throw error
+        }
+
+        lock.lock()
+        _isRunning = true
+        lock.unlock()
+
+        // Subscribed only while capture is running, and to this engine only.
+        // Since ADR-0009 nobody in this app switches the device's mode, which
+        // means the next switch comes from another process — and without this a
+        // switched device leaves the tap running and every frame gone.
+        let recovery = CaptureRecovery(
+            delays: restartDelays,
+            restart: { [weak self] in try self?.openTap() },
+            report: { [weak self] status in self?.onStatusChange?(status) }
+        )
+        recovery.watch(engine)
+        lock.lock()
+        self.recovery = recovery
+        lock.unlock()
+
+        onStatusChange?(.capturing)
+    }
+
+    func stop() {
+        lock.lock()
+        guard _isRunning else { lock.unlock(); return }
+        _isRunning = false
+        let recovery = self.recovery
+        self.recovery = nil
+        onFrame = nil
+        lock.unlock()
+
+        // Outside the lock: `stopWatching` takes a lock of its own, and a
+        // restart running right now takes this one.
+        recovery?.stopWatching()
+
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        onStatusChange?(.idle)
+    }
+
+    /// Brings the engine up around the current input node — the first time, and
+    /// again after the device has changed under us.
+    ///
+    /// Everything is re-read rather than remembered, because a configuration
+    /// change is precisely the moment the old values stop being true: the node
+    /// reports a different format, and the converter built for the previous one
+    /// would either fail or, worse, quietly produce silence.
+    private func openTap() throws {
+        lock.lock()
+        let handler = onFrame
+        lock.unlock()
+        guard let handler else { return }
 
         let input = engine.inputNode
-        if voiceProcessingEnabled {
-            do {
-                // Enabling voice processing changes the node's format, so it must
-                // happen before the format is read and before the tap is installed.
-                try input.setVoiceProcessingEnabled(true)
-            } catch {
-                throw CaptureError.voiceProcessingUnavailable(error)
-            }
-
-            // Voice processing ducks every other sound on the machine while it
-            // captures. That is wrong here twice over: it quietens the call the
-            // user is listening to, and it quietens the very audio the `Them`
-            // channel is trying to recognise. Ducking is turned down to its
-            // minimum; echo cancellation itself is unaffected.
-            input.voiceProcessingOtherAudioDuckingConfiguration =
-                AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
-                    enableAdvancedDucking: false,
-                    duckingLevel: .min
-                )
-        }
+        engine.stop()
+        input.removeTap(onBus: 0)
 
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
@@ -126,12 +199,14 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
         }
 
         // The tap is installed with `nil` rather than with the format the node
-        // reports. With voice processing on, the reported format and the one the
-        // node actually delivers can differ, and a tap pinned to the wrong one
-        // yields buffers of digital silence — the microphone indicator lights up
-        // and every sample is zero. `nil` means "whatever this node really
-        // produces", which is also why the converter below is built from the
-        // buffer rather than from the reported format.
+        // reports. The reported format and the one the node actually delivers can
+        // differ, and a tap pinned to the wrong one yields buffers of digital
+        // silence — the microphone indicator lights up and every sample is zero.
+        // `nil` means "whatever this node really produces", which is also why the
+        // converter below is built from the buffer rather than from the reported
+        // format. Switching voice processing off did **not** retire this: the
+        // mismatch is a property of the input node, and another process can put
+        // the device into a multi-channel mode at any moment (ADR-0009).
         let targetFormat = targetFormat
         let converterBox = ConverterBox()
         input.installTap(onBus: 0, bufferSize: 4096, format: nil) { buffer, _ in
@@ -144,7 +219,7 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
                 converter: converter,
                 targetFormat: targetFormat
             ) else { return }
-            onFrame(frame)
+            handler(frame)
         }
 
         engine.prepare()
@@ -154,28 +229,22 @@ nonisolated final class MicCaptureService: AudioSource, @unchecked Sendable {
             input.removeTap(onBus: 0)
             throw error
         }
-        isRunning = true
-    }
-
-    func stop() {
-        guard isRunning else { return }
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        isRunning = false
     }
 
     /// Takes channel 0 of a captured buffer as a mono buffer at the same rate.
     ///
     /// This exists because of a trap that costs a whole debugging session if you
-    /// meet it blind: with voice processing on, the built-in microphone presents
-    /// **seven** channels — the processed mono stream plus the raw elements of
-    /// the mic array. Handing that straight to `AVAudioConverter` and asking for
-    /// mono makes it return **silence**: it has no channel map for folding seven
-    /// into one, and it reports no error while doing so. The indicator lights up,
-    /// buffers keep arriving, and every sample is zero.
+    /// meet it blind: a multi-channel input handed straight to `AVAudioConverter`
+    /// with a request for mono comes back as **silence** — the converter has no
+    /// channel map for the fold, and it reports no error while doing so. The
+    /// indicator lights up, buffers keep arriving, and every sample is zero.
     ///
-    /// Channel 0 is the stream voice processing has already cleaned, which is
-    /// exactly the one the `You` channel wants.
+    /// It was found with voice processing on, where the built-in microphone
+    /// presents seven channels, and **it survives ADR-0009 unchanged**: a headset
+    /// delivers two, and any other process may still put the built-in microphone
+    /// into its multi-channel mode while we are recording. The rule that came out
+    /// of it — never ask a converter to fold more than two channels — is not tied
+    /// to who enabled what.
     /// Internal rather than private so the regression test can reach it.
     static func firstChannel(of buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
         let format = buffer.format
