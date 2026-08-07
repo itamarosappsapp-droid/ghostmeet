@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Сравнение моделей — GhostMeet</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg:#f6f6f7; --card:#fff; --ink:#17171a; --dim:#6b6b73; --line:#e2e2e6;
+    --accent:#2f6fed; --ok:#1f8a4c; --warn:#c9781a; --bad:#c0392b; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#131316; --card:#1c1c20; --ink:#ececf0; --dim:#9a9aa4; --line:#2c2c33;
+            --accent:#6f9dff; --ok:#58c98a; --warn:#e0a05a; --bad:#ff7b6b; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:0 0 80px;background:var(--bg);color:var(--ink);
+       font:15px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif}
+  .wrap{max-width:1240px;margin:0 auto;padding:0 20px}
+  h1{font-size:22px;margin:24px 0 6px;letter-spacing:-.01em}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:26px 0 10px;font-weight:600}
+  .lede{color:var(--dim);margin:0 0 16px;max-width:70ch}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+  label{display:block;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim);margin-bottom:5px}
+  input,textarea,select{font:inherit;width:100%;padding:8px 10px;border-radius:8px;
+       border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+  textarea{font:12.5px/1.5 var(--mono);resize:vertical}
+  input[type=checkbox]{width:auto}
+  button{font:inherit;font-weight:500;cursor:pointer;border-radius:8px;border:1px solid var(--line);
+         background:var(--card);color:var(--ink);padding:8px 14px}
+  button:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button:disabled{opacity:.45;cursor:default}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+  .row > *{flex:1 1 200px}
+  .row > .narrow{flex:0 0 120px}
+  .row > .auto{flex:0 0 auto}
+  .hint{font-size:12.5px;color:var(--dim);margin-top:6px}
+  .warn{color:var(--warn)}
+
+  /* Каталог моделей */
+  .catalogue{max-height:280px;overflow-y:auto;border:1px solid var(--line);border-radius:8px}
+  .m{display:grid;grid-template-columns:1fr 88px 54px 90px;gap:8px;align-items:center;
+     padding:7px 10px;border-bottom:1px solid var(--line);cursor:pointer;font-size:13px}
+  .m:last-child{border-bottom:none}
+  .m:hover{background:color-mix(in srgb,var(--accent) 10%,transparent)}
+  .m.on{background:color-mix(in srgb,var(--accent) 18%,transparent)}
+  .m code{font:12px var(--mono)}
+  .num{text-align:right;font-variant-numeric:tabular-nums;color:var(--dim)}
+
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .chip{background:color-mix(in srgb,var(--accent) 16%,transparent);border:1px solid transparent;
+        border-radius:20px;padding:3px 10px;font-size:12.5px;display:flex;gap:6px;align-items:center}
+  .chip b{font-weight:500;font-family:var(--mono);font-size:12px}
+  .chip button{border:none;background:none;padding:0 0 0 2px;color:var(--dim);font-size:15px;line-height:1}
+
+  /* Результаты */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(370px,1fr));gap:12px}
+  .res{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column}
+  .res h3{margin:0 0 2px;font:13px/1.3 var(--mono);word-break:break-all}
+  .meta{font-size:12px;color:var(--dim);margin-bottom:8px;font-variant-numeric:tabular-nums}
+  .out{white-space:pre-wrap;font-size:14px;line-height:1.5;flex:1;min-height:60px;
+       border-top:1px solid var(--line);padding-top:8px;margin-top:2px}
+  .out.err{color:var(--bad);font-family:var(--mono);font-size:12.5px}
+  .marks{display:flex;gap:5px;flex-wrap:wrap;margin-top:9px}
+  .mark{font-size:11.5px;padding:2px 8px;border-radius:12px;border:1px solid var(--line)}
+  .mark.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,var(--line))}
+  .mark.bad{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,var(--line))}
+  .mark.mid{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 45%,var(--line))}
+
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim);font-weight:600}
+  td.n{text-align:right}
+  .bar{position:sticky;bottom:0;background:color-mix(in srgb,var(--bg) 92%,transparent);
+       backdrop-filter:blur(10px);border-top:1px solid var(--line);padding:12px 0;margin-top:20px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Сравнение моделей</h1>
+<p class="lede">
+  Один и тот же вопрос уходит выбранным моделям <b>тем же промптом, что и из приложения</b>, потоком, параллельно.
+  Видно, кто отвечает быстрее, кто держит правила, и сколько это стоит.
+</p>
+
+<div class="panel">
+  <label for="key">Ключ Polza.AI</label>
+  <input id="key" type="password" placeholder="вставьте ключ" autocomplete="off">
+  <div class="hint">
+    Ключ уходит <b>только на api.polza.ai</b>, прямо из этой вкладки. Никуда больше и никому — страница локальная, без своего сервера.
+    <label style="display:inline-flex;gap:6px;align-items:center;text-transform:none;letter-spacing:0;font-size:12.5px;margin-top:6px;color:var(--dim)">
+      <input type="checkbox" id="remember"> запомнить в этом браузере (localStorage)
+    </label>
+  </div>
+</div>
+
+<h2>Системный промпт — тот, что уходит из приложения</h2>
+<div class="panel">
+  <textarea id="system" rows="14"></textarea>
+  <div class="row" style="margin-top:8px">
+    <div class="auto"><button id="resetSystem">Вернуть исходный</button></div>
+    <div class="hint" style="flex:1 1 auto;margin:0;align-self:center">
+      Это §9 из <code>GhostMeet-Prompts.md</code>, жанр «коротко», плюс блок профиля — ровно как собирает <code>BriefPrompt</code>. Правьте и запускайте снова: так видно, какая правка чинит, а какая нет.
+    </div>
+  </div>
+</div>
+
+<h2>Сообщение пользователя</h2>
+<div class="panel">
+  <textarea id="user" rows="7"></textarea>
+  <div class="hint">Шаблон из того же §9 с подставленным разговором. Меняйте вопрос — на нём и сравниваем.</div>
+</div>
+
+<h2>Модели</h2>
+<div class="panel">
+  <div class="row">
+    <div><label for="q">Поиск по каталогу</label><input id="q" placeholder="gpt, gemini, claude…"></div>
+    <div class="narrow"><label for="maxPrice">₽/нажатие до</label><input id="maxPrice" type="number" step="0.05" value="1.2"></div>
+    <div class="auto"><label>&nbsp;</label><label style="display:flex;gap:6px;align-items:center;text-transform:none;letter-spacing:0;font-size:13px"><input type="checkbox" id="visionOnly" checked> только со зрением</label></div>
+    <div class="auto"><label>&nbsp;</label><button id="addRecommended">Добавить рекомендованные</button></div>
+  </div>
+  <div class="catalogue" id="catalogue" style="margin-top:10px"><div style="padding:12px;color:var(--dim)">загружаю каталог…</div></div>
+  <div class="chips" id="chosen"></div>
+  <div class="hint">Цена — за одно нажатие в приложении: примерно 10 000 входных токенов (весь разговор, промпт, OCR) и 400 выходных.</div>
+</div>
+
+<h2>Что отправляем</h2>
+<div class="panel">
+  <div class="row">
+    <div class="narrow"><label for="maxTokens">max_tokens</label><input id="maxTokens" type="number" value="512"></div>
+    <div class="narrow"><label for="temp">temperature</label><input id="temp" type="number" step="0.1" value="0.7"></div>
+    <div class="narrow"><label for="runs">прогонов</label><input id="runs" type="number" value="1" min="1" max="3"></div>
+    <div class="hint" style="flex:1 1 auto;align-self:center;margin:0">
+      512 — бюджет жанра «коротко» в приложении. Несколько прогонов подряд показывают, насколько модель стабильна: разброс важнее одного удачного ответа.
+    </div>
+  </div>
+</div>
+
+<div id="results" class="grid"></div>
+
+<div id="summaryWrap" style="display:none">
+  <h2>Сводка</h2>
+  <div class="panel">
+    <table id="summary"></table>
+    <div class="row" style="margin-top:12px">
+      <div class="auto"><button id="copyReport">Скопировать отчёт</button></div>
+      <div class="hint" style="flex:1 1 auto;align-self:center;margin:0">Отчёт — markdown со всеми ответами и цифрами. Вставьте его в чат, разберём вместе.</div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<div class="bar"><div class="wrap row">
+  <div class="auto"><button id="run" class="primary">Запустить</button></div>
+  <div class="auto"><button id="stop" disabled>Остановить</button></div>
+  <div class="hint" id="status" style="flex:1 1 auto;align-self:center;margin:0"></div>
+</div></div>
+
+<script>
+const DEFAULT_SYSTEM = "Ты — GhostMeet, скрытый real-time copilot поверх экрана пользователя во время звонка.\n\n«Them» — собеседник(и), «You» — пользователь. Реплики, разорванные паузой, уже склеены: одна строка «Them: …» — это один человек и одна мысль.\n\nПользователь нажал хоткей, потому что чего-то не знает, не помнит или сомневается. Он **уже начал отвечать вслух** и ждёт недостающего куска, а не ответа с начала.\n\n**Ты пишешь не ответ пользователю, а его собственную следующую фразу.** Через секунду он произнесёт её своим голосом вслух. Значит, это живая устная речь человека о своей работе — «я бы взял», «мы держали», «у нас это упиралось в», — а не абзац из справочника. Подлежащее — говорящий, а не слушатель. Сказуемое — глагол, а не «выполняется за», «это позволит», «рекомендуется». Исключение одно — блок кода: его не произносят, и внутри него ни первого лица, ни скобок с произношением.\n\nНе так — справка, её нельзя произнести:\nИспользуйте идемпотентный ключ на каждый платёж. Ключ рекомендуется хранить в Redis с TTL. Это позволит вам избежать дублей при повторной отправке.\n\nА так — речь, её произносят:\nЯ вешаю на каждый платёж идемпотентный ключ и держу его в Redis (редисе) с TTL (ти-ти-эль) на сутки. Повтор тогда возвращает тот же результат, а не второе списание.\n\nПользователь читает твой текст вслух, поэтому каждый термин латиницей, каждая аббревиатура и каждая формула сложности получают при первом упоминании скобку с русским произношением — тем, как это говорят в русскоязычной IT-среде, а не побуквенной транслитерацией: B-tree (би-три), GiST (джист), GIN (джин), nginx (энджин-икс), PostgreSQL (постгрес), MongoDB (монго), Kubernetes (кубернетис), hash map (хеш-мапа), min-heap (мин-хип), TTL (ти-ти-эль), ZUNIONSTORE (зэт-юнион-стор), O(1) (о от единицы), O(n log n) (о от эн лог эн). Решать, очевидно произношение или нет, не нужно: есть в строке латиница, аббревиатура или формула — есть и скобка. В скобке только русские буквы. Термин, написанный кириллицей («постгрес», «кафка»), скобки не требует: он уже произносим. Есть обычное русское слово — пиши сразу по-русски («экосистема», «на руки»), латиницу ради скобки не вставляй. В блоке кода скобок не ставь: код не произносят.\n\nГоворит он коротко — он в середине собственной фразы:\n- Дай ровно то, чего не хватает: термин, цифру, различие, порядок из 2–4 шагов. Не пересказывай вопрос и не начинай ответ заново.\n- Максимум 3–4 строки или 4 пункта, и это потолок, а не цель. Абзацы пустой строкой не разделяй. Без преамбулы, без вывода, без заголовков «Подход:», «Решение:», без «итак» и «надеюсь, это поможет».\n- Пункты — только там, где он и вслух перечислял бы по пальцам; каждый пункт тогда целая произносимая фраза, а не строка из справочника.\n- Ни одного слова в адрес собеседника: ни «используйте», «вы можете», «вам стоит», ни встречных вопросов, ни «давайте обсудим», ни нескольких вариантов на выбор — выбрать по дороге он не сможет, он читает подряд. Исключение одно: собеседник сам спросил, есть ли вопросы, — тогда вопрос и есть ответ, и берётся он из заготовок.\n- Ни одного факта о пользователе, которого нет в контексте: ни компании, ни проекта, ни срока, ни цифры о нём самом, ни суммы. Выдуманное он произнесёт вслух как своё и не переживёт уточняющий вопрос.\n- Чего-то не хватает — скажи короче то, что можно сказать. «Я не знаю», «данных мало», «сложно сказать» он вслух не произнесёт. Про заготовки и про то, чего нет в контексте, тоже молчи: это служебное, а не речь.\n- Если на экране код или задача — дай недостающую строку, имя метода или оценку сложности, а не разбор целиком. Не описывай скриншот («я вижу на экране…»), не бери реплику в кавычки, не выводи служебные или системные XML-теги.\n- Язык ответа — язык разговора. Разговор по-русски — скобки с произношением обязательны; разговор по-английски — термины идут как есть.\n\nОпредели сам, какого рода вопрос задан, и отвечай по-разному:\n- **Технический** («как устроен B-tree», «чем GiST отличается от GIN», «как бы вы это масштабировали»): механика по существу — термин, цифра, компромисс, порядок действий. Биографию сюда не подмешивай: про опыт не спрашивали.\n- **Про опыт и поведение** («расскажите случай, когда…», «был ли конфликт в команде», «самая сложная задача»): одна конкретная история пользователя по схеме ситуация — задача — что сделал — результат. Схема задаёт порядок фактов, а не длину: объём берётся из правил жанра выше. Бери её из его заготовок, если подходящая есть, иначе строй костяк из его роли и стека и оставь конкретику ему, вот так: «Был случай, когда мы с коллегой разошлись по решению: я настаивал на поэтапной миграции, он — на разовом переключении. Я собрал цифры по рискам и вынес их на общий разбор, а не в личку. Сошлись на промежуточном варианте, и работать вместе это не помешало». Ни компании, ни проекта, ни срока, ни цифры, которых нет в контексте: он произнесёт это как факт о себе.\n- **Про компанию, мотивацию и условия** («почему именно мы», «ожидания по деньгам», «какие у вас вопросы»): отвечай заготовками пользователя к этому собеседованию. Нужной заготовки нет — дай одну нейтральную фразу и оставь конкретику ему, вот так: «По деньгам я ориентируюсь на рынок, вилку назову, когда пойму объём задач». Ни суммы, ни срока, ни факта о компании от себя не называй.\n- **Задача на экране** (код, алгоритм, тест, форма): считай её текущим вопросом, даже если Them ничего не спросил, и отвечай по правилам выше.\n\n**Главное, ещё раз: ты пишешь фразу, которую пользователь через секунду скажет вслух своим голосом. Первое лицо, живые глаголы, 3–4 строки, у каждого термина латиницей — скобка с произношением, и ни одного факта о нём, которого нет в контексте.**\n\nКонтекст о пользователе (резюме / роль / стек):\nРоль: backend-разработчик\nОпыт: 7 лет, финтех и высоконагруженные сервисы\nСтек: Go, PostgreSQL, Kafka, Kubernetes\n\nЗаготовки пользователя к этому собеседованию:\nИстории из практики:\nРазошлись с коллегой по миграции горячей таблицы: я настаивал на поэтапной, он на разовом переключении. Собрал цифры по рискам и вынес на общий разбор, сошлись на промежуточном варианте.\n\nПочему эта компания:\nПродукт про платежи, знаком по прошлой работе; интересен масштаб и команда.";
+const DEFAULT_USER = "Разговор:\nThem: Нужно отдавать топ сто товаров по просмотрам за последний час. Просмотров — миллионы. Какая структура данных и какая сложность?\n\nЯ уже говорю вслух. Продолжи за меня: напиши мою следующую фразу — ровно то, чего мне не хватает.";
+
+// Рекомендованные к сравнению — почему именно эти, написано в чате.
+const RECOMMENDED = [
+  'openai/gpt-5.4-mini',              // то, что понравилось: эталон качества
+  'openai/gpt-5-mini',                // та же семья, втрое дешевле
+  'openai/gpt-4.1-mini',
+  'openai/gpt-4o-mini',
+  'openai/gpt-5-nano',                // нижняя граница: хватает ли нано
+  'google/gemini-2.5-flash',
+  'google/gemini-3.1-flash-lite',
+  'anthropic/claude-haiku-4.5',       // обычно лучший по следованию инструкциям
+  'qwen/qwen3-vl-30b-a3b-instruct',
+  'z-ai/glm-4.7',
+];
+
+const el = (id) => document.getElementById(id);
+const API = 'https://api.polza.ai/api/v1';
+
+let catalogue = [];      // весь список
+let chosen = [];         // выбранные id
+let controller = null;   // отмена прогона
+let lastRun = [];        // для отчёта
+
+// ---------------------------------------------------------------- каталог
+
+async function loadCatalogue() {
+  try {
+    const r = await fetch(API + '/models');
+    const j = await r.json();
+    catalogue = (j.data || [])
+      .filter((m) => m.type === 'chat')
+      .map((m) => {
+        const p = (m.top_provider && m.top_provider.pricing) || {};
+        const inp = parseFloat(p.prompt_per_million || 0);
+        const out = parseFloat(p.completion_per_million || 0);
+        return {
+          id: m.id,
+          name: m.name,
+          vision: (m.architecture?.input_modalities || []).includes('image'),
+          ctx: m.top_provider?.context_length || 0,
+          inp, out,
+          perPress: inp * 0.010 + out * 0.0004,
+        };
+      })
+      .filter((m) => m.inp > 0)
+      .sort((a, b) => a.perPress - b.perPress);
+    renderCatalogue();
+  } catch (e) {
+    el('catalogue').innerHTML = '<div style="padding:12px;color:var(--bad)">каталог не загрузился: ' + e.message + '</div>';
+  }
+}
+
+function renderCatalogue() {
+  const q = el('q').value.trim().toLowerCase();
+  const cap = parseFloat(el('maxPrice').value) || Infinity;
+  const visionOnly = el('visionOnly').checked;
+  const list = catalogue.filter((m) =>
+    (!q || m.id.toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q)) &&
+    m.perPress <= cap && (!visionOnly || m.vision));
+
+  el('catalogue').innerHTML = list.length
+    ? list.map((m) => `
+      <div class="m ${chosen.includes(m.id) ? 'on' : ''}" data-id="${m.id}">
+        <code>${m.id}</code>
+        <span class="num">${m.perPress.toFixed(3)} ₽</span>
+        <span class="num">${m.vision ? '👁' : '—'}</span>
+        <span class="num">${Math.round(m.ctx / 1000)}k</span>
+      </div>`).join('')
+    : '<div style="padding:12px;color:var(--dim)">ничего не нашлось</div>';
+
+  el('catalogue').querySelectorAll('.m').forEach((n) => {
+    n.addEventListener('click', () => toggle(n.dataset.id));
+  });
+}
+
+function toggle(id) {
+  chosen = chosen.includes(id) ? chosen.filter((x) => x !== id) : [...chosen, id];
+  renderCatalogue(); renderChosen();
+}
+
+function renderChosen() {
+  el('chosen').innerHTML = chosen.map((id) => {
+    const m = catalogue.find((x) => x.id === id);
+    return `<span class="chip"><b>${id}</b> ${m ? m.perPress.toFixed(3) + ' ₽' : ''}<button data-off="${id}">×</button></span>`;
+  }).join('');
+  el('chosen').querySelectorAll('[data-off]').forEach((b) =>
+    b.addEventListener('click', () => toggle(b.dataset.off)));
+  const total = chosen.reduce((s, id) => s + (catalogue.find((x) => x.id === id)?.perPress || 0), 0);
+  el('status').textContent = chosen.length
+    ? `${chosen.length} моделей, примерно ${(total * (parseInt(el('runs').value) || 1)).toFixed(2)} ₽ за прогон`
+    : '';
+}
+
+// ---------------------------------------------------------------- проверки
+//
+// Три из четырёх критериев считаются машиной, четвёртый — правильность
+// ответа — остаётся человеку: её не проверить регуляркой.
+
+const ADDRESSING = [
+  'используйте', 'используй ', 'вы можете', 'вам стоит', 'стоит взять', 'рекомендуется',
+  'это позволит вам', 'вам нужно', 'попробуйте', 'давайте обсудим', 'давай обсудим',
+  'обратите внимание', 'вам следует',
+];
+
+function checkRegister(text) {
+  const low = text.toLowerCase();
+  const hits = ADDRESSING.filter((w) => low.includes(w));
+  return { ok: hits.length === 0, detail: hits.length ? hits.join(', ') : 'первое лицо' };
+}
+
+/**
+ * Латинские термины и формулы сложности, и есть ли у каждого скобка с кириллицей.
+ *
+ * Соседние латинские слова склеиваются в один термин, и это не мелочь: «hash map
+ * (хеш-мапа)» — один термин с одной скобкой, а посимвольный разбор считал бы
+ * «hash» непокрытым и врал бы ровно на тех терминах, из-за которых всё и
+ * затевалось. Так же с «Count-Min Sketch» и «O(log n)».
+ */
+function checkPronunciation(text) {
+  const WORD = String.raw`(?:O\s*\([^)]*\)|[A-Za-z][A-Za-z0-9._+\-]*)`;
+  const re = new RegExp(WORD + '(?:\\s+' + WORD + ')*', 'g');
+  const terms = [];
+  let m;
+  while ((m = re.exec(text))) {
+    const term = m[0].trim();
+    // Одно короткое слово термином не считаем: «а», «и», случайная латиница.
+    if (!/O\s*\(/.test(term) && term.replace(/[^A-Za-z]/g, '').length < 3) continue;
+    const after = text.slice(m.index + m[0].length, m.index + m[0].length + 60);
+    // Скобка сразу за термином и с кириллицей внутри — это и есть подсказка,
+    // как его произнести. Скобка с латиницей внутри ею не является.
+    const covered = /^\s*\([^)]*[а-яё]/i.test(after);
+    terms.push({ term, covered });
+  }
+  const total = terms.length;
+  const covered = terms.filter((t) => t.covered).length;
+  const missed = [...new Set(terms.filter((t) => !t.covered).map((t) => t.term))];
+  return {
+    ok: total === 0 || covered === total,
+    partial: covered > 0 && covered < total,
+    detail: total === 0
+      ? 'терминов нет'
+      : `${covered} из ${total}` + (missed.length ? ' · без скобки: ' + missed.slice(0, 4).join(', ') : ''),
+  };
+}
+
+function checkLength(text) {
+  const lines = text.trim().split('\n').filter((l) => l.trim()).length;
+  const words = text.trim().split(/\s+/).length;
+  return { ok: lines <= 4 && words <= 90, mid: lines <= 6, detail: `${lines} стр., ${words} слов` };
+}
+
+function checkPreamble(text) {
+  const bad = /^(итак|конечно|хорошо|разумеется|отличный вопрос|давайте|коротко:|ответ:)/i.test(text.trim());
+  return { ok: !bad, detail: bad ? 'начинается с преамбулы' : 'без преамбулы' };
+}
+
+// ---------------------------------------------------------------- прогон
+
+function card(id) {
+  const n = document.createElement('div');
+  n.className = 'res';
+  n.innerHTML = `<h3>${id}</h3><div class="meta">ждём…</div><div class="out"></div><div class="marks"></div>`;
+  el('results').appendChild(n);
+  return n;
+}
+
+async function ask(model, signal, runIndex) {
+  const node = card(model + (runIndex ? ` · прогон ${runIndex + 1}` : ''));
+  const out = node.querySelector('.out');
+  const meta = node.querySelector('.meta');
+  const started = performance.now();
+  let firstAt = null, chunks = 0, text = '', usage = null;
+
+  try {
+    const r = await fetch(API + '/chat/completions', {
+      method: 'POST',
+      signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + el('key').value.trim(),
+      },
+      body: JSON.stringify({
+        model,
+        stream: true,
+        stream_options: { include_usage: true },
+        max_tokens: parseInt(el('maxTokens').value) || 512,
+        temperature: parseFloat(el('temp').value),
+        messages: [
+          { role: 'system', content: el('system').value },
+          { role: 'user', content: el('user').value },
+        ],
+      }),
+    });
+
+    if (!r.ok) {
+      const body = await r.text();
+      out.className = 'out err';
+      out.textContent = `HTTP ${r.status}\n${body.slice(0, 600)}`;
+      meta.textContent = 'отказ';
+      return { model, error: `HTTP ${r.status}`, runIndex };
+    }
+
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (payload === '[DONE]') continue;
+        let j; try { j = JSON.parse(payload); } catch { continue; }
+        if (j.usage) usage = j.usage;
+        const piece = j.choices?.[0]?.delta?.content;
+        if (!piece) continue;
+        if (firstAt === null) firstAt = performance.now();
+        chunks++;
+        text += piece;
+        out.textContent = text;
+        meta.textContent = `первый токен ${Math.round(firstAt - started)} мс · идёт…`;
+      }
+    }
+
+    const total = performance.now() - started;
+    const ttft = firstAt ? Math.round(firstAt - started) : null;
+    const price = catalogue.find((x) => x.id === model);
+    const cost = usage && price
+      ? (usage.prompt_tokens / 1e6) * price.inp + (usage.completion_tokens / 1e6) * price.out
+      : null;
+
+    meta.textContent = [
+      ttft !== null ? `первый токен ${ttft} мс` : 'без стриминга',
+      `всего ${(total / 1000).toFixed(1)} с`,
+      chunks > 1 ? `${chunks} кусков` : 'одним куском',
+      cost !== null ? `${cost.toFixed(3)} ₽` : '',
+    ].filter(Boolean).join(' · ');
+
+    const checks = {
+      register: checkRegister(text),
+      pronunciation: checkPronunciation(text),
+      length: checkLength(text),
+      preamble: checkPreamble(text),
+    };
+    const marks = node.querySelector('.marks');
+    marks.innerHTML = [
+      mark('регистр', checks.register),
+      mark('произношение', checks.pronunciation),
+      mark('длина', checks.length),
+      mark('преамбула', checks.preamble),
+      `<span class="mark ${chunks > 1 ? 'ok' : 'bad'}">${chunks > 1 ? 'стриминг' : 'без стриминга'}</span>`,
+    ].join('');
+
+    return { model, runIndex, text, ttft, total: Math.round(total), chunks, cost, usage, checks };
+  } catch (e) {
+    if (e.name === 'AbortError') { meta.textContent = 'остановлено'; return { model, runIndex, aborted: true }; }
+    out.className = 'out err';
+    out.textContent = String(e);
+    meta.textContent = 'ошибка';
+    return { model, runIndex, error: String(e) };
+  }
+}
+
+function mark(name, c) {
+  const cls = c.ok ? 'ok' : (c.partial || c.mid ? 'mid' : 'bad');
+  return `<span class="mark ${cls}" title="${c.detail}">${name}: ${c.detail}</span>`;
+}
+
+async function run() {
+  if (!el('key').value.trim()) { alert('Вставьте ключ Polza.AI'); return; }
+  if (!chosen.length) { alert('Выберите хотя бы одну модель'); return; }
+
+  el('results').innerHTML = '';
+  el('summaryWrap').style.display = 'none';
+  el('run').disabled = true; el('stop').disabled = false;
+  controller = new AbortController();
+
+  const runs = Math.max(1, Math.min(3, parseInt(el('runs').value) || 1));
+  const jobs = [];
+  for (let i = 0; i < runs; i++) {
+    for (const model of chosen) jobs.push(ask(model, controller.signal, runs > 1 ? i : null));
+  }
+  lastRun = (await Promise.all(jobs)).filter((r) => r && !r.aborted && !r.error);
+
+  el('run').disabled = false; el('stop').disabled = true;
+  if (lastRun.length) renderSummary();
+}
+
+function renderSummary() {
+  const rows = [...lastRun].sort((a, b) => (a.ttft ?? 1e9) - (b.ttft ?? 1e9));
+  el('summary').innerHTML =
+    '<tr><th>модель</th><th class="n">1-й токен</th><th class="n">всего</th><th class="n">₽</th>' +
+    '<th>регистр</th><th>произношение</th><th>длина</th></tr>' +
+    rows.map((r) => `<tr>
+      <td><code style="font:12px var(--mono)">${r.model}</code></td>
+      <td class="n">${r.ttft ?? '—'} мс</td>
+      <td class="n">${(r.total / 1000).toFixed(1)} с</td>
+      <td class="n">${r.cost !== null && r.cost !== undefined ? r.cost.toFixed(3) : '—'}</td>
+      <td>${r.checks.register.ok ? '✓' : '✗ ' + r.checks.register.detail}</td>
+      <td>${r.checks.pronunciation.detail}</td>
+      <td>${r.checks.length.detail}</td>
+    </tr>`).join('');
+  el('summaryWrap').style.display = '';
+}
+
+function report() {
+  const lines = ['# Сравнение моделей GhostMeet', ''];
+  lines.push('Вопрос:', '', '```', el('user').value.trim(), '```', '');
+  lines.push('| модель | 1-й токен | всего | ₽ | стриминг | регистр | произношение | длина |');
+  lines.push('|---|---:|---:|---:|---|---|---|---|');
+  for (const r of [...lastRun].sort((a, b) => (a.ttft ?? 1e9) - (b.ttft ?? 1e9))) {
+    lines.push(`| ${r.model} | ${r.ttft ?? '—'} мс | ${(r.total / 1000).toFixed(1)} с | ${r.cost?.toFixed(3) ?? '—'} | ${r.chunks > 1 ? 'да' : 'НЕТ'} | ${r.checks.register.ok ? 'ок' : '✗ ' + r.checks.register.detail} | ${r.checks.pronunciation.detail} | ${r.checks.length.detail} |`);
+  }
+  lines.push('', '## Ответы', '');
+  for (const r of lastRun) {
+    lines.push(`### ${r.model}`, '', r.text.trim(), '');
+  }
+  navigator.clipboard.writeText(lines.join('\n'));
+  el('copyReport').textContent = 'скопировано';
+  setTimeout(() => el('copyReport').textContent = 'Скопировать отчёт', 1500);
+}
+
+// ---------------------------------------------------------------- проводка
+
+el('system').value = DEFAULT_SYSTEM;
+el('user').value = DEFAULT_USER;
+el('resetSystem').addEventListener('click', () => el('system').value = DEFAULT_SYSTEM);
+el('q').addEventListener('input', renderCatalogue);
+el('maxPrice').addEventListener('input', renderCatalogue);
+el('visionOnly').addEventListener('change', renderCatalogue);
+el('runs').addEventListener('input', renderChosen);
+el('addRecommended').addEventListener('click', () => {
+  for (const id of RECOMMENDED) if (!chosen.includes(id) && catalogue.some((m) => m.id === id)) chosen.push(id);
+  renderCatalogue(); renderChosen();
+});
+el('run').addEventListener('click', run);
+el('stop').addEventListener('click', () => controller?.abort());
+el('copyReport').addEventListener('click', report);
+
+// Ключ: в памяти всегда, на диске — только если попросили.
+const saved = localStorage.getItem('polza.key');
+if (saved) { el('key').value = saved; el('remember').checked = true; }
+el('remember').addEventListener('change', () => {
+  if (el('remember').checked) localStorage.setItem('polza.key', el('key').value.trim());
+  else localStorage.removeItem('polza.key');
+});
+el('key').addEventListener('change', () => {
+  if (el('remember').checked) localStorage.setItem('polza.key', el('key').value.trim());
+});
+
+loadCatalogue();
+</script>
+</body>
+</html>
