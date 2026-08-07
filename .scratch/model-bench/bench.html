@@ -133,6 +133,10 @@
     <div class="narrow"><label for="maxTokens">max_tokens</label><input id="maxTokens" type="number" value="512"></div>
     <div class="narrow"><label for="temp">temperature</label><input id="temp" type="number" step="0.1" value="0.7"></div>
     <div class="narrow"><label for="runs">прогонов</label><input id="runs" type="number" value="1" min="1" max="3"></div>
+    <div class="narrow"><label for="effort">reasoning</label><select id="effort">
+      <option value="">не слать</option><option value="minimal">minimal</option>
+      <option value="low">low</option><option value="medium">medium</option>
+    </select></div>
     <div class="hint" style="flex:1 1 auto;align-self:center;margin:0">
       512 — бюджет жанра «коротко» в приложении. Несколько прогонов подряд показывают, насколько модель стабильна: разброс важнее одного удачного ответа.
     </div>
@@ -350,6 +354,10 @@ async function ask(model, signal, runIndex) {
         stream_options: { include_usage: true },
         max_tokens: parseInt(el('maxTokens').value) || 512,
         temperature: parseFloat(el('temp').value),
+        // Модели с рассуждением тратят бюджет на невидимые токены и возвращают
+        // пустоту, за которую уже заплачено. Ручка нужна, чтобы это проверить,
+        // а не гадать: у gpt-5-mini и gpt-5-nano так вышло на первом прогоне.
+        ...(el('effort').value ? { reasoning_effort: el('effort').value } : {}),
         messages: [
           { role: 'system', content: el('system').value },
           { role: 'user', content: el('user').value },
@@ -404,6 +412,15 @@ async function ask(model, signal, runIndex) {
       cost !== null ? `${cost.toFixed(3)} ₽` : '',
     ].filter(Boolean).join(' · ');
 
+    if (!text.trim()) {
+      const spent = usage ? `${usage.completion_tokens || 0} токенов списано` : 'токены списаны';
+      out.className = 'out err';
+      out.textContent = `ПУСТО, но ${spent}.\n\nПохоже на модель с рассуждением: весь бюджет ушёл на невидимые токены. ` +
+        `Поднимите max_tokens до 2000 или выставьте reasoning = minimal и прогоните ещё раз.`;
+      node.querySelector('.marks').innerHTML = '<span class="mark bad">пустой ответ</span>';
+      return { model, runIndex, text: '', ttft, total: Math.round(total), chunks, cost, usage, empty: true };
+    }
+
     const checks = {
       register: checkRegister(text),
       pronunciation: checkPronunciation(text),
@@ -449,6 +466,11 @@ async function run() {
     for (const model of chosen) jobs.push(ask(model, controller.signal, runs > 1 ? i : null));
   }
   lastRun = (await Promise.all(jobs)).filter((r) => r && !r.aborted && !r.error);
+  const empties = lastRun.filter((r) => r.empty);
+  lastRun = lastRun.filter((r) => !r.empty);
+  if (empties.length) {
+    el('status').textContent = `${empties.length} пустых ответов: ${[...new Set(empties.map((e) => e.model))].join(', ')} — см. карточки`;
+  }
 
   el('run').disabled = false; el('stop').disabled = true;
   if (lastRun.length) renderSummary();
