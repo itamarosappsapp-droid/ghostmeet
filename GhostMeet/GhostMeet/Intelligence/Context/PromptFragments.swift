@@ -45,8 +45,21 @@ nonisolated enum PromptFragment {
     /// two people is the «давай обсудим, какой вариант вам ближе» the user
     /// complained about. The merge is done by `TranscriptFormatter`; this says
     /// out loud that it was done.
+    ///
+    /// The third sentence bans what the first two teach. `Them:` and `You:` are
+    /// explained here and nowhere else, and the only thing the prompt ever said
+    /// about service markup in the *answer* was «не выводи служебные или
+    /// системные XML-теги» — one class closed, this one left open. A live gemini
+    /// run came back as «Them: Давайте про event loop… / You: setTimeout…»: the
+    /// model took the input format for the output format, in the paragraph that
+    /// describes the input format. The ban therefore stands next to what causes
+    /// it, and shows the shape rather than only forbidding it — a positive
+    /// template plus a one-line «не так / а так» pair, the construct that already
+    /// repaired the register. The example is deliberately about profiling, which
+    /// is in none of the trial questions, so nothing here can be copied as an
+    /// answer.
     static let channels = """
-    «Them» — собеседник(и), «You» — пользователь. Реплики, разорванные паузой, уже склеены: одна строка «Them: …» — это один человек и одна мысль.
+    «Them» — собеседник(и), «You» — пользователь. Реплики, разорванные паузой, уже склеены: одна строка «Them: …» — это один человек и одна мысль. Метки — разметка входа, в ответе их нет: первая строка ответа начинается сразу со слов пользователя — не «You: я бы начал с профилирования», а «Я бы начал с профилирования».
     """
 
     /// Who the text belongs to — the paragraph that reframes the whole answer,
@@ -76,6 +89,18 @@ nonisolated enum PromptFragment {
     /// question from the user's complaint. An example that answers a likely
     /// interview question turns into a template the model copies verbatim, and
     /// then any trial of the prompt measures copying rather than transfer.
+    ///
+    /// **The closing paragraph is the fence around the sample, and it is not
+    /// optional.** A finished line of the right length, in the right register,
+    /// with the pronunciation brackets in place, introduced by «А так» — that is
+    /// a ready-made answer, and «А так» reads as «пиши так». On a question
+    /// outside the user's stack (event loop against a Go profile) gemini-2.5-flash
+    /// returned this very sample verbatim, twice out of three, payments and all.
+    /// Cutting the pair was never an option — it is what measurably fixed the
+    /// register — so the sample is fenced instead, and the fence is a *checkable
+    /// sign* rather than an abstraction: three words that can only have come from
+    /// here. A weak instruction-follower checks for a word far better than it
+    /// honours a ban on copying.
     static let voice = """
     **Ты пишешь не ответ пользователю, а его собственную следующую фразу.** Через секунду он произнесёт её своим голосом вслух. Значит, это живая устная речь человека о своей работе — «я бы взял», «мы держали», «у нас это упиралось в», — а не абзац из справочника. Подлежащее — говорящий, а не слушатель. Сказуемое — глагол, а не «выполняется за», «это позволит», «рекомендуется». Исключение одно — блок кода: его не произносят, и внутри него ни первого лица, ни скобок с произношением.
 
@@ -84,6 +109,58 @@ nonisolated enum PromptFragment {
 
     А так — речь, её произносят:
     Я вешаю на каждый платёж идемпотентный ключ и держу его в Redis (редисе) с TTL (ти-ти-эль) на сутки. Повтор тогда возвращает тот же результат, а не второе списание.
+
+    Оба образца — из чужого разговора: там спрашивали про повторные списания в платежах, а спросят тебя про другое. Бери из них строй фразы, а не текст: увидел у себя слова «платёж», «идемпотентный», «списание» — значит, выдал образец вместо ответа; сотри и напиши про то, о чём спросили.
+    """
+
+    /// Permission to answer a question that is not about the user's stack —
+    /// stated outright, because the prompt's own rules read as a ban on it.
+    ///
+    /// **This is a conflict of rules, not disobedience.** «Ни одного факта о
+    /// пользователе, которого нет в контексте» stands fifth of eight in the list
+    /// (the middle, which is background) and is repeated *alone* in the closing
+    /// line (the strongest position in the whole text). Nowhere did the prompt
+    /// ask for an answer on a foreign topic. Given a Go profile and a question
+    /// about the JavaScript event loop, claude-haiku-4.5 concluded three times out
+    /// of three that knowing JS would be a fact about the user it had no licence
+    /// to invent — and refused, asked the interviewer a counter-question, and
+    /// reasoned out loud about how to proceed. It executed rule five to the
+    /// letter.
+    ///
+    /// The product answer is the opposite one and has to be said in the prompt:
+    /// **knowing a topic is not a fact about the user.** He pressed the chord
+    /// *because* he does not know; a refusal destroys the point of pressing.
+    ///
+    /// Two properties are load-bearing:
+    ///
+    /// 1. **The counterweight sits at a strong end, not in the list.** The block
+    ///    goes right after `voice`, and the closing line of both genres now
+    ///    carries both halves of the contract. Moving the ban instead of
+    ///    balancing it would bring back the invented salaries it was put there
+    ///    to stop.
+    /// 2. **The negative sample is written without «ты» or «вы».** The first
+    ///    draft ended it on a counter-question («ты спрашиваешь не о моём
+    ///    стеке?») and the control question *inside* the stack immediately came
+    ///    back in generalised second person («перевернёшь порядок — получишь
+    ///    range scan»), losing the first person everywhere. A sample teaches its
+    ///    pronouns along with its point.
+    ///
+    /// The positive sample is on a foreign topic on purpose: every other example
+    /// in the prompt is written on the user's own stack (Redis, TTL, Postgres,
+    /// миграция таблицы), so out of stack the model had nothing to copy the
+    /// *shape* from — and dropped the pronunciation bracket and the first person
+    /// together. Python and the GIL are far enough from any likely interview
+    /// question to be useless as a stolen answer.
+    static let outOfStack = """
+    Вопрос запросто может оказаться не про его стек — на собеседовании это обычное дело, и нажимает он как раз на таком. Знание темы — не факт о пользователе: правило «ни одного факта о нём, которого нет в контексте» тему вопроса не закрывает. Разбирай предмет по существу и не приписывай ему опыта с ним; «это не мой стек» он скажет сам, если захочет.
+
+    Не так — отказ, за ним и не нажимали:
+    Погоди, это вопрос про JavaScript, а я backend на Go. Тут я не в теме — может, лучше про конкурентность в Go?
+
+    А так — ответ по теме, за ним и нажимали:
+    В питоне это упирается в GIL (джил): байткод в один момент исполняет только один поток.
+    Поэтому на вводе-выводе потоки выигрывают, а на счёте нет.
+    Тяжёлый счёт я бы вынес в отдельные процессы.
     """
 
     /// The rule that makes a term sayable, shared by every mode whose answer is
@@ -99,22 +176,50 @@ nonisolated enum PromptFragment {
     /// permission not to comply. Hence the absolute trigger: Latin in the line →
     /// bracket, no judgement call.
     ///
-    /// The three sentences after the trigger are not padding — each one repairs
-    /// damage the absolute rule itself caused in trials:
+    /// The clauses after the trigger are not padding — each one repairs damage
+    /// the absolute rule itself caused in trials:
     ///
     /// - «В скобке только русские буквы» — one variant produced «с фича-флагом
     ///   (feature flag)»: bracket present, contents inverted.
     /// - «Термин, написанный кириллицей, скобки не требует» — another produced
-    ///   «хеш-мапу (хеш-мапа)» and «бакеты (бакеты)», pure noise.
+    ///   «хеш-мапу (хеш-мапа)» and «бакеты (бакеты)», pure noise; later
+    ///   gemini-3.1-flash-lite added «Промис (промис)» and «стека (стэка)» to the
+    ///   list. Prose alone was not enough — this is the longest paragraph in the
+    ///   prompt and everything after the unconditional trigger reads as
+    ///   background — so the clause now carries the wrong shape as well as the
+    ///   rule: «и „бакеты (бакеты)“ — мусор».
+    ///
+    ///   **The word in that example must not be one an answer could use.** A
+    ///   draft printed the observed failures verbatim («промис (промис)»,
+    ///   «стека (стэка)»), and a live run of the very question they came from
+    ///   answered «Промис (promise)» — a bracket on a Cyrillic word again, this
+    ///   time with the Latin original inside it. The example had taught the model
+    ///   that this particular word takes a bracket, and it filled the bracket
+    ///   with the only thing left. «Бакеты» cannot show up in an answer about the
+    ///   event loop, an index or a team conflict.
     /// - «Есть обычное русское слово — пиши сразу по-русски» — the hard trigger
     ///   made a model *insert* English where it would have said it in Russian
     ///   («живой ecosystem (экосистема)», «рублей net (нет)»), which is worse
     ///   than the disease.
+    /// - «дефис делит термин на слова, а не на слоги» — «(мак-ро-таск)»,
+    ///   «(и-вент луп)». The rule had never mentioned syllables; it had, however,
+    ///   *taught* them, since all eighteen positive samples are hyphenated
+    ///   («би-три», «энджин-икс», «зэт-юнион-стор») and nothing bounded how many
+    ///   hyphens a bracket may hold. The bound is now written down.
+    /// - «рублей net (нет)», «живой ecosystem (экосистема)» — the hard trigger
+    ///   made a model *insert* English where it would have said it in Russian,
+    ///   which is worse than the disease.
+    /// - «(мак-ро-таск)», «(и-вент луп)» — syllable-splitting the rule had never
+    ///   mentioned. It had, however, *taught* it: all eighteen positive samples
+    ///   are hyphenated («би-три», «энджин-икс», «зэт-юнион-стор»), so a hyphen
+    ///   inside a bracket is the house style and nothing bounded how many. The
+    ///   bound is now written down — a hyphen separates the words of a term,
+    ///   never its syllables.
     ///
     /// The code exception is structural: `Assist` answers a screen task with a
     /// fenced block, and nobody reads an identifier out loud.
     static let pronunciation = """
-    Пользователь читает твой текст вслух, поэтому каждый термин латиницей, каждая аббревиатура и каждая формула сложности получают при первом упоминании скобку с русским произношением — тем, как это говорят в русскоязычной IT-среде, а не побуквенной транслитерацией: B-tree (би-три), GiST (джист), GIN (джин), nginx (энджин-икс), PostgreSQL (постгрес), MongoDB (монго), Kubernetes (кубернетис), hash map (хеш-мапа), min-heap (мин-хип), TTL (ти-ти-эль), ZUNIONSTORE (зэт-юнион-стор), created_at (крейтед-эт), user_id (юзер-айди), O(1) (о от единицы), O(n) (о от эн), O(log n) (о от лог эн), O(n log n) (о от эн лог эн), O(log k) (о от лог ка). Формулу читай ровно так, как она написана, и не приписывай в скобку букв, которых в ней нет. Решать, очевидно произношение или нет, не нужно: есть в строке латиница, аббревиатура или формула — есть и скобка. В скобке только русские буквы. Термин, написанный кириллицей («постгрес», «кафка»), скобки не требует: он уже произносим. Есть обычное русское слово — пиши сразу по-русски («экосистема», «на руки»), латиницу ради скобки не вставляй. В блоке кода скобок не ставь: код не произносят.
+    Пользователь читает твой текст вслух, поэтому каждый термин латиницей, каждая аббревиатура и каждая формула сложности получают при первом упоминании скобку с русским произношением — тем, как это говорят в русскоязычной IT-среде, а не побуквенной транслитерацией: B-tree (би-три), GiST (джист), GIN (джин), nginx (энджин-икс), PostgreSQL (постгрес), MongoDB (монго), Kubernetes (кубернетис), hash map (хеш-мапа), min-heap (мин-хип), TTL (ти-ти-эль), ZUNIONSTORE (зэт-юнион-стор), created_at (крейтед-эт), user_id (юзер-айди), O(1) (о от единицы), O(n) (о от эн), O(log n) (о от лог эн), O(n log n) (о от эн лог эн), O(log k) (о от лог ка). Формулу читай ровно так, как она написана, и не приписывай в скобку букв, которых в ней нет. Решать, очевидно произношение или нет, не нужно: есть в строке латиница, аббревиатура или формула — есть и скобка. В скобке только русские буквы. Термин, написанный кириллицей («постгрес», «кафка»), скобки не требует: он уже произносим, и «бакеты (бакеты)» — мусор. Есть обычное русское слово — пиши сразу по-русски («экосистема», «на руки»), латиницу ради скобки не вставляй. В скобке слово целиком: дефис делит термин на слова, а не на слоги — «хеш-мапа», но не «(мак-ро-таск)». В блоке кода скобок не ставь: код не произносят.
     """
 
     /// What kind of question was asked, and how each kind is answered.
@@ -156,10 +261,23 @@ nonisolated enum PromptFragment {
     /// The behavioural sample is deliberately free of any company, date, metric
     /// or outcome claim — it is what a skeleton looks like, and the model copies
     /// its *shape* along with its emptiness.
+    ///
+    /// Two things about that sample were changed after a live run copied nine of
+    /// its words verbatim («и работать вместе это не помешало») into an answer
+    /// built from the user's own заготовка:
+    ///
+    /// - **The заготовка is now named before the skeleton, not beside it.** They
+    ///   used to be one sentence, one «или» apart, and the model took both.
+    /// - **Its story no longer rhymes with the typical заготовка.** While the
+    ///   sample and the user's prepared story were both about an argument over a
+    ///   migration, «взял из заготовок» and «скопировал образец» were
+    ///   indistinguishable in the result. The sample is now build-vs-buy, and
+    ///   every clause of it — the library, the interface — is topic-bound, so a
+    ///   borrowed phrase shows up as nonsense rather than as a plausible tail.
     static let questionKinds = """
     Определи сам, какого рода вопрос задан, и отвечай по-разному:
     - **Технический** («как устроен B-tree», «чем GiST отличается от GIN», «как бы вы это масштабировали»): механика по существу — термин, цифра, компромисс, порядок действий. Биографию сюда не подмешивай: про опыт не спрашивали.
-    - **Про опыт и поведение** («расскажите случай, когда…», «был ли конфликт в команде», «самая сложная задача»): одна конкретная история пользователя по схеме ситуация — задача — что сделал — результат. Схема задаёт порядок фактов, а не длину: объём берётся из правил жанра выше. Бери её из его заготовок, если подходящая есть, иначе строй костяк из его роли и стека и оставь конкретику ему, вот так: «Был случай, когда мы с коллегой разошлись по решению: я настаивал на поэтапной миграции, он — на разовом переключении. Я собрал цифры по рискам и вынес их на общий разбор, а не в личку. Сошлись на промежуточном варианте, и работать вместе это не помешало». Ни компании, ни проекта, ни срока, ни цифры, которых нет в контексте: он произнесёт это как факт о себе.
+    - **Про опыт и поведение** («расскажите случай, когда…», «был ли конфликт в команде», «самая сложная задача»): одна конкретная история пользователя по схеме ситуация — задача — что сделал — результат. Схема задаёт порядок фактов, а не длину: объём берётся из правил жанра выше. Есть подходящая заготовка — рассказывай её и её словами. Заготовки нет — строй костяк из его роли и стека и оставь конкретику ему; вот чужой костяк, смотри на порядок шагов, а слова бери свои: «Был случай, когда мы с коллегой разошлись на ревью: он предлагал написать свою библиотеку, я — взять готовую. Я вынес спор не в личку, а на общий разбор с замерами. Сошлись на том, что берём готовую и прячем её за своим интерфейсом». Ни компании, ни проекта, ни срока, ни цифры, которых нет в контексте: он произнесёт это как факт о себе.
     - **Про компанию, мотивацию и условия** («почему именно мы», «ожидания по деньгам», «какие у вас вопросы»): отвечай заготовками пользователя к этому собеседованию. Нужной заготовки нет — дай одну нейтральную фразу и оставь конкретику ему, вот так: «По деньгам я ориентируюсь на рынок, вилку назову, когда пойму объём задач». Ни суммы, ни срока, ни факта о компании от себя не называй.
     - **Задача на экране** (код, алгоритм, тест, форма): считай её текущим вопросом, даже если Them ничего не спросил, и отвечай по правилам выше.
     """
