@@ -408,6 +408,31 @@ function checkPronunciation(text) {
   };
 }
 
+/**
+ * Скобки, в которых нет смысла: «промис (промис)», «тайп-гард (тайп-гард)».
+ *
+ * Отдельная проверка, потому что счётчик покрытия считает наличие скобки, а не
+ * её пользу, и модель с «6 из 6» может при этом дублировать русские слова.
+ * Промпт это прямо запрещает — «термин, написанный кириллицей, скобки не
+ * требует», — и правило нарушалось в пяти прогонах подряд у трёх разных моделей.
+ */
+function checkBrackets(text) {
+  const norm = (w) => w.toLowerCase().replace(/[ё]/g, 'е').replace(/[^а-я]/g, '');
+  const empty = [];
+  const re = /([А-Яа-яЁё][А-Яа-яЁё-]{2,})\s*\(([^)]{2,})\)/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const before = norm(m[1]), inside = norm(m[2]);
+    if (!inside) continue;                       // латиница в скобке — другой случай
+    if (before === inside) empty.push(m[1]);     // «промис (промис)»
+    else if (before.startsWith(inside) || inside.startsWith(before)) empty.push(m[1]);
+  }
+  return {
+    ok: empty.length === 0,
+    detail: empty.length ? 'пустые скобки: ' + [...new Set(empty)].slice(0, 4).join(', ') : 'без пустых скобок',
+  };
+}
+
 function checkLength(text) {
   const lines = text.trim().split('\n').filter((l) => l.trim()).length;
   const words = text.trim().split(/\s+/).length;
@@ -521,6 +546,7 @@ async function ask(model, signal, runIndex) {
     const checks = {
       register: checkRegister(text),
       pronunciation: checkPronunciation(text),
+      brackets: checkBrackets(text),
       length: checkLength(text),
       preamble: checkPreamble(text),
     };
@@ -528,6 +554,7 @@ async function ask(model, signal, runIndex) {
     marks.innerHTML = [
       mark('регистр', checks.register),
       mark('произношение', checks.pronunciation),
+      mark('скобки', checks.brackets),
       mark('длина', checks.length),
       mark('преамбула', checks.preamble),
       `<span class="mark ${chunks > 1 ? 'ok' : 'bad'}">${chunks > 1 ? 'стриминг' : 'без стриминга'}</span>`,
