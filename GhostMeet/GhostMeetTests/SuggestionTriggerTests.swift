@@ -105,7 +105,8 @@ struct SuggestionTriggerTests {
         let brief = call.provider.requests[0]
         let detailed = call.provider.requests[1]
 
-        #expect(brief.systemPrompt == BriefPrompt.system(profile: .empty))
+        // Сказал только собеседник — значит, редакция «вслух он ещё ничего не сказал».
+        #expect(brief.systemPrompt == BriefPrompt.system(profile: .empty, hasStartedAnswering: false))
         #expect(brief.maxTokens == BriefPrompt.maxTokens)
         #expect(detailed.systemPrompt == AssistPrompt.system(profile: .empty))
         #expect(detailed.maxTokens == AssistPrompt.maxTokens)

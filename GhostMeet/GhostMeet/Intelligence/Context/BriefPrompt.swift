@@ -68,9 +68,18 @@ nonisolated enum BriefPrompt {
         screenText: String = "",
         screenshot: Data? = nil
     ) -> SuggestionRequest {
-        SuggestionRequest(
-            systemPrompt: system(profile: profile, interviewContext: interviewContext),
-            userPrompt: user(transcript: transcript, screenText: screenText),
+        let started = TranscriptFormatter.hasStartedAnswering(transcript)
+        return SuggestionRequest(
+            systemPrompt: system(
+                profile: profile,
+                interviewContext: interviewContext,
+                hasStartedAnswering: started
+            ),
+            userPrompt: user(
+                transcript: transcript,
+                screenText: screenText,
+                hasStartedAnswering: started
+            ),
             screenshot: screenshot,
             maxTokens: maxTokens
         )
@@ -84,9 +93,14 @@ nonisolated enum BriefPrompt {
     /// the заготовки or from nothing.
     static func system(
         profile: UserProfile,
-        interviewContext: InterviewContext = .empty
+        interviewContext: InterviewContext = .empty,
+        hasStartedAnswering: Bool = true
     ) -> String {
-        PromptFragment.system(systemRules, profile: profile, interviewContext: interviewContext)
+        PromptFragment.system(
+            systemRules(hasStartedAnswering: hasStartedAnswering),
+            profile: profile,
+            interviewContext: interviewContext
+        )
     }
 
     /// The transcript window, what is written on the screen, and the ask.
@@ -102,16 +116,32 @@ nonisolated enum BriefPrompt {
     /// is an invitation back into the «вот вам инструкция» register the rules
     /// above spend a paragraph forbidding. It now repeats the frame instead —
     /// last position, same contract.
-    static func user(transcript: [Turn], screenText: String = "") -> String {
+    static func user(
+        transcript: [Turn],
+        screenText: String = "",
+        hasStartedAnswering: Bool = true
+    ) -> String {
         let window = TranscriptFormatter.format(transcript, limit: transcriptWindow)
         let screenBlock = PromptFragment.screenText(screenText).map { "\n\($0)\n" } ?? ""
         return """
         Разговор:
         \(window.isEmpty ? emptyTranscriptPlaceholder : window)
         \(screenBlock)
-        Я уже говорю вслух. Продолжи за меня: напиши мою следующую фразу — ровно то, чего мне не хватает.
+        \(hasStartedAnswering ? Self.askContinuing : Self.askOpening)
         """
     }
+
+    /// The closing ask, in the two shapes the moment of the press comes in.
+    ///
+    /// Last position in the last message the model reads, so it repeats the frame
+    /// rather than naming the user as the addressee — see the note above. What
+    /// differs between the two is a statement of fact, not of style: one of them
+    /// is false at every press, and which one is known.
+    static let askContinuing =
+        "Я уже говорю вслух. Продолжи за меня с того места, где я остановился, — ровно то, чего мне не хватает, не повторяя сказанного мной."
+
+    static let askOpening =
+        "Я ещё не начал говорить. Напиши мою первую фразу — сразу по существу, без разгона и без пересказа вопроса."
 
     /// Verbatim from docs/GhostMeet-Prompts.md §9.
     ///
@@ -152,12 +182,27 @@ nonisolated enum BriefPrompt {
     /// Note the language rule: the answer follows the language of the
     /// conversation. Russian is never forced — the interview may well be in
     /// English.
-    private static let systemRules = """
+    /// The opening paragraph, in the two shapes the moment of the press comes in.
+    ///
+    /// **This used to be one paragraph asserting «Он уже начал отвечать вслух»,
+    /// and the assertion is false in the case the app is designed around.** A
+    /// press force-closes the open `Them` turn — that is, the interviewer has just
+    /// stopped and the candidate is still silent. The other case is real too (the
+    /// press flushes `You` as well), so the sentence is chosen from the
+    /// transcript rather than asserted; see `TranscriptFormatter.hasStartedAnswering`.
+    ///
+    /// Dropping the claim altogether was the wrong fix and was not taken: it is
+    /// what stops the short genre from restarting the answer from the beginning,
+    /// which was the original live complaint. The «не с начала» half therefore
+    /// survives in both shapes — what changes is whether there is a sentence to
+    /// continue.
+    private static func systemRules(hasStartedAnswering: Bool) -> String {
+    """
     Ты — GhostMeet, скрытый real-time copilot поверх экрана пользователя во время звонка.
 
     \(PromptFragment.channels)
 
-    Пользователь нажал хоткей, потому что чего-то не знает, не помнит или сомневается. Он **уже начал отвечать вслух** и ждёт недостающего куска, а не ответа с начала.
+    \(hasStartedAnswering ? Self.pressedMidSentence : Self.pressedBeforeSpeaking)
 
     \(PromptFragment.voice)
 
@@ -179,4 +224,16 @@ nonisolated enum BriefPrompt {
 
     **Главное, ещё раз: ты пишешь фразу, которую пользователь через секунду скажет вслух своим голосом. Первое лицо, живые глаголы, не больше 45 слов и каждая мысль с новой строки, у каждого термина латиницей — скобка с произношением, ни одного факта о нём, которого нет в контексте, — и ответ по существу, когда тема не из его стека. Образцы в этих правилах — чужой текст: ни одной их строки в ответе.**
     """
+    }
+
+    /// Why the press happened, in the shape that is true of this press.
+    ///
+    /// The «не с начала» half is in both on purpose: it is what stops the genre
+    /// restarting the answer from the top, which was the original live complaint,
+    /// and it holds whether or not a sentence is already under way.
+    private static let pressedMidSentence =
+        "Пользователь нажал хоткей, потому что чего-то не знает, не помнит или сомневается. Он **уже начал отвечать вслух** и ждёт недостающего куска, а не ответа с начала. Последняя строка `You` — то, что он уже произнёс: продолжай с неё и не пересказывай её."
+
+    private static let pressedBeforeSpeaking =
+        "Пользователь нажал хоткей, потому что чего-то не знает, не помнит или сомневается. Собеседник только что договорил, и **вслух он ещё ничего не сказал** — ему нужна фраза, с которой он начнёт: сразу по существу, без разгона и без пересказа вопроса."
 }

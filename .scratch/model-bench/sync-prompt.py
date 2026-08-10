@@ -94,13 +94,41 @@ def blocks_from_doc(section: str) -> list[str]:
     return found
 
 
-def assembled(section: str) -> str:
+def assembled(section: str, body: str | None = None) -> str:
     """System-промпт жанра ровно так, как его клеит `PromptFragment.system`."""
     return "\n\n".join([
-        blocks_from_doc(section)[0],
+        body if body is not None else blocks_from_doc(section)[0],
         f"{PROFILE_HEADING}\n{PROFILE}",
         f"{CONTEXT_HEADING}\n{INTERVIEW_CONTEXT}",
     ])
+
+
+def alternatives() -> tuple[str, str]:
+    """Две строки второй редакции короткого жанра — из примечания 8 документа.
+
+    Читаются оттуда, а не пишутся здесь: расходиться им нельзя, а сверять две
+    копии одного текста в двух файлах уже приходилось после целого потерянного
+    прогона.
+    """
+    doc = DOC.read_text(encoding="utf-8")
+    start = doc.index("Вторая редакция заменяет ровно две строки")
+    found = re.findall(r"```text\n(.*?)\n\s*```", doc[start:start + 2000], re.S)
+    if len(found) < 2:
+        raise SystemExit("в примечании 8 не нашлись обе строки второй редакции")
+    return found[0].strip(), found[1].strip()
+
+
+def brief_opening() -> str:
+    """Короткий жанр в редакции «он ещё не начал говорить».
+
+    Приложение выбирает редакцию по транскрипту, значит и стенд обязан: иначе
+    галочка `You` даёт сочетание промпта и разговора, которого приложение не
+    отправляет никогда.
+    """
+    body = blocks_from_doc("## 9. Коротко")[0]
+    opening, _ = alternatives()
+    started = next(l for l in body.split("\n") if l.startswith("Пользователь нажал хоткей"))
+    return assembled("## 9. Коротко", body.replace(started, opening))
 
 
 def user_tail(section: str) -> str:
@@ -140,8 +168,13 @@ def fingerprint(value) -> str:
 # бюджетом; сравнивать их между собой имеет смысл только так.
 CONSTANTS = [
     ("DEFAULT_SYSTEM", lambda: assembled("## 9. Коротко")),
+    ("DEFAULT_SYSTEM_OPENING", brief_opening),
     ("DEFAULT_SYSTEM_LONG", lambda: assembled("## 1. Assist")),
-    ("USER_TAILS", lambda: {"brief": user_tail("## 9. Коротко"), "long": user_tail("## 1. Assist")}),
+    ("USER_TAILS", lambda: {
+        "brief": user_tail("## 9. Коротко"),
+        "briefOpening": alternatives()[1],
+        "long": user_tail("## 1. Assist"),
+    }),
     ("QUESTIONS", lambda: QUESTIONS),
 ]
 
@@ -182,6 +215,7 @@ def main() -> int:
     # ровно то число, которое печатает этот скрипт, иначе сверять их бесполезно.
     put("PROMPT_FINGERPRINTS", json.dumps(
         {"brief": fingerprint(assembled("## 9. Коротко")),
+         "briefOpening": fingerprint(brief_opening()),
          "long": fingerprint(assembled("## 1. Assist"))}, ensure_ascii=False))
     BENCH.write_text(html, encoding="utf-8")
     return 0

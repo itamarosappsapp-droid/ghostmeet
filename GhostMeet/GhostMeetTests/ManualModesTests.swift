@@ -327,7 +327,10 @@ struct PromptComposerTests {
         let brief = composer.compose(.brief, transcript: transcript, screen: screen, accepting: .multimodal)
         let detailed = composer.compose(.detailed, transcript: transcript, screen: screen, accepting: .multimodal)
 
-        #expect(brief.systemPrompt == BriefPrompt.system(profile: UserProfile(role: "Backend Engineer")))
+        #expect(brief.systemPrompt == BriefPrompt.system(
+            profile: UserProfile(role: "Backend Engineer"),
+            hasStartedAnswering: TranscriptFormatter.hasStartedAnswering(transcript)
+        ))
         #expect(detailed.systemPrompt == AssistPrompt.system(profile: UserProfile(role: "Backend Engineer")))
         #expect(brief.maxTokens == BriefPrompt.maxTokens)
         #expect(detailed.maxTokens == AssistPrompt.maxTokens)
@@ -627,7 +630,8 @@ struct RequestHotkeyTests {
         await call.engine.waitForSuggestion()
 
         #expect(call.model.requests.count == 2)
-        #expect(call.model.requests[0].systemPrompt == BriefPrompt.system(profile: .empty))
+        // Сказал только собеседник — значит, редакция «вслух он ещё ничего не сказал».
+        #expect(call.model.requests[0].systemPrompt == BriefPrompt.system(profile: .empty, hasStartedAnswering: false))
         #expect(call.model.requests[1].systemPrompt == AssistPrompt.system(profile: .empty))
     }
 }

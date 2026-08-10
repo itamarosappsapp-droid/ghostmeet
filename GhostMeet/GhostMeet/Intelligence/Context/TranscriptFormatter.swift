@@ -108,6 +108,31 @@ nonisolated enum TranscriptFormatter {
         return fitted(window, into: budget)
     }
 
+    /// Whether the user has already started saying their answer out loud.
+    ///
+    /// **The short genre used to assert this unconditionally** — «Он **уже начал
+    /// отвечать вслух**» — and the assertion is false in the case the app is
+    /// actually built for: a press force-closes the open `Them` turn, which means
+    /// the interviewer has only just stopped and the candidate has not opened
+    /// their mouth yet. Both cases are real (the press also flushes `You`), so
+    /// the app answers the question instead of guessing, and the prompt gets the
+    /// sentence that is true.
+    ///
+    /// It is worth being told, and not only for tidiness: measured on the bench,
+    /// a transcript ending in a half-finished `You` line makes models restate the
+    /// words the candidate has already spoken — gpt-5.4-mini opened with a
+    /// verbatim copy of the user's own line in both runs. Whatever the prompt
+    /// says about it, it has to know which case it is in.
+    ///
+    /// Leaks do not count. A `You` turn marked by `LeakDedup` is the interviewer's
+    /// voice coming back through the speakers, and treating it as the candidate
+    /// speaking would assert the opposite of the truth precisely when the room is
+    /// at its worst.
+    static func hasStartedAnswering(_ turns: [Turn]) -> Bool {
+        turns.last { !$0.isLeak && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }?
+            .channel == .you
+    }
+
     /// The channel's name as the prompts spell it.
     static func label(for channel: Channel) -> String {
         switch channel {
