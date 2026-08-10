@@ -104,6 +104,62 @@ struct OpenAICompatibleProviderTests {
         #expect(answer.error == nil)
     }
 
+    /// Так закрывает поток vLLM и часть шлюзов: последняя дельта и признак в
+    /// одном чанке. Пока `decode` возвращал одно событие и читал текст первым,
+    /// признак терялся — обрыв по бюджету не замечался вовсе, и правка про
+    /// оборванный ответ на этих серверах не работала.
+    @Test("Текст и finish_reason одним чанком — обрыв по бюджету замечен")
+    func aBudgetCutBesideTheTextIsSeen() async throws {
+        let provider = try makeProvider(
+            presetID: "openai",
+            transport: ChunkTransport(lines: [
+                #"data: {"choices":[{"delta":{"content":" попада"},"finish_reason":"length"}]}"#,
+                Chunk.done,
+            ])
+        )
+
+        let answer = await collect(provider.stream(.sample()))
+
+        #expect(answer.fragments == [" попада"])
+        #expect(answer.error as? SuggestionCutoff == .budget)
+    }
+
+    @Test("Текст и stop одним чанком, без [DONE] — обрывом не считается")
+    func aNormalFinishBesideTheTextIsNotACutoff() async throws {
+        let provider = try makeProvider(
+            presetID: "openai",
+            transport: ChunkTransport(lines: [
+                #"data: {"choices":[{"delta":{"content":" и дате."},"finish_reason":"stop"}]}"#,
+            ])
+        )
+
+        let answer = await collect(provider.stream(.sample()))
+
+        #expect(answer.fragments == [" и дате."])
+        #expect(answer.error == nil)
+    }
+
+    /// Модель отказалась и положила отказ в `delta.refusal` — поле, которого мы
+    /// не читаем, — после чего честно закрыла поток. Раньше это оседало как
+    /// `.complete` с пустым текстом: карточка показывала «…» под заголовком
+    /// «подсказка» и ни слова о том, что ответа нет.
+    @Test("Поток закрыт по правилам и пуст — сказано, что ответа нет")
+    func aProperlyClosedEmptyStreamIsReported() async throws {
+        let provider = try makeProvider(
+            presetID: "openai",
+            transport: ChunkTransport(lines: [
+                #"data: {"choices":[{"delta":{"refusal":"I can't help with that."},"finish_reason":null}]}"#,
+                #"data: {"choices":[{"delta":{},"finish_reason":"stop"}]}"#,
+                Chunk.done,
+            ])
+        )
+
+        let answer = await collect(provider.stream(.sample()))
+
+        #expect(answer.fragments.isEmpty)
+        #expect(answer.error as? SuggestionCutoff == .empty)
+    }
+
     @Test("Поток закрылся, не сказав ни слова — это не пустая подсказка молча")
     func anEmptyStreamIsReported() async throws {
         let provider = try makeProvider(
@@ -284,7 +340,11 @@ struct OpenAICompatibleProviderTests {
         let answer = await collect(provider.stream(.sample()))
 
         #expect(answer.fragments == ["Начну отвечать"], "то, что уже пришло, не пропадает")
-        #expect(answer.error as? LLMFailure == .unauthorized)
+        // Договор «то, что уже пришло, не пропадает» тот же, но теперь он
+        // доезжает до экрана: отказ поверх показанного текста стал обрывом,
+        // потому что карточка при `.failed` рисует причину ВМЕСТО ответа —
+        // и фраза исчезала у пользователя из-под глаз, пока он её читал.
+        #expect(answer.error as? SuggestionCutoff == .stopped(LLMFailure.unauthorized.message))
     }
 
     @Test("Остальные отказы доносят формулировку провайдера дословно")

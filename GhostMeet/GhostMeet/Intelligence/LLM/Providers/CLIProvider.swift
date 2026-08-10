@@ -153,7 +153,12 @@ nonisolated struct CLIProvider: LLMProvider {
         try Task.checkCancellation()
 
         guard status == 0 else {
-            throw LLMFailure.provider(failureMessage(status: status, from: process))
+            let reason = failureMessage(status: status, from: process)
+            // Инструмент, убитый сигналом посреди ответа, возвращает 15 или 9 —
+            // и до этой правки половина ответа, которую пользователь читал
+            // вслух, исчезала с экрана, потому что карточка при отказе рисует
+            // причину ВМЕСТО текста. Пока текста нет — это по-прежнему отказ.
+            throw delivered == 0 ? LLMFailure.provider(reason) : SuggestionCutoff.stopped(reason)
         }
         // Exited cleanly and said nothing. Rarer than over HTTP but not
         // impossible — a tool that has lost its session prints its complaint to

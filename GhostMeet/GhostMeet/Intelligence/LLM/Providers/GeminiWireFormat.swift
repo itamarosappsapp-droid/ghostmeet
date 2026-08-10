@@ -16,8 +16,6 @@ nonisolated enum GeminiStreamEvent: Equatable, Sendable {
     /// The model stopped before finishing. What arrived stays; the reason is
     /// shown under it.
     case cut(SuggestionCutoff)
-    /// Bookkeeping (usage, safety ratings, thought summaries) — nothing for the user.
-    case ignored
 }
 
 /// Everything Gemini-specific about the bytes on the wire.
@@ -101,42 +99,50 @@ nonisolated enum GeminiWireFormat {
     /// Anything unrecognised is ignored rather than treated as an error: chunks
     /// carry usage counters, safety ratings and (when asked for) thought
     /// summaries, and a suggestion must not die because of one of them.
-    static func decode(line: String) -> GeminiStreamEvent {
-        guard let payload = payload(of: line) else { return .ignored }
+    /// Reads one line of the event stream into everything it carries.
+    ///
+    /// **A list and not one event, and for Gemini that is not an edge case but
+    /// the normal shape.** Each SSE chunk here is a whole `GenerateContentResponse`,
+    /// and the last one carries both the closing fragment and `finishReason`; a
+    /// short answer arrives as a single such chunk. Checking the text first and
+    /// returning meant the reason was never seen at all — and since this dialect
+    /// has no `[DONE]`, the stream then ended with no terminal event, so **every
+    /// finished answer** was reported as a dropped connection. The `MAX_TOKENS`
+    /// branch was unreachable in live traffic for the same reason.
+    static func decode(line: String) -> [GeminiStreamEvent] {
+        guard let payload = payload(of: line) else { return [] }
         // Not part of Gemini's dialect, but gateways that re-emit it as OpenAI
         // do send it; cheaper to accept than to explain.
-        if payload == "[DONE]" { return .done }
-        guard let object = json(payload) else { return .ignored }
+        if payload == "[DONE]" { return [.done] }
+        guard let object = json(payload) else { return [] }
 
         if object["error"] != nil {
-            return .failure(failure(status: 200, body: payload))
+            return [.failure(failure(status: 200, body: payload))]
         }
         // The prompt itself was refused — no candidate will ever arrive.
         if let feedback = object["promptFeedback"] as? [String: Any],
            let reason = feedback["blockReason"] as? String {
-            return .failure(.provider("Gemini отклонил запрос: \(reason)."))
+            return [.failure(.provider("Gemini отклонил запрос: \(reason)."))]
         }
 
         let candidates = object["candidates"] as? [[String: Any]] ?? []
+        var events: [GeminiStreamEvent] = []
         let text = answerText(in: candidates)
-        if !text.isEmpty { return .text(text) }
+        if !text.isEmpty { events.append(.text(text)) }
 
-        // A chunk with no answer text either closes the turn or explains why
-        // there is nothing to show.
-        guard let reason = candidates.compactMap({ $0["finishReason"] as? String }).first else {
-            return .ignored
-        }
-        switch reason {
+        switch candidates.compactMap({ $0["finishReason"] as? String }).first {
+        case nil:
+            break
         case "STOP":
-            return .done
-        // Used to be folded into `STOP`, and that is exactly the defect this
-        // whole change exists for: an answer that ran out of budget closed the
-        // stream as if the model had finished its sentence.
+            events.append(.done)
         case "MAX_TOKENS":
-            return .cut(.budget)
-        default:
-            return .failure(.provider("Gemini прервал ответ: \(reason)."))
+            events.append(.cut(.budget))
+        case .some(let reason):
+            // Отказ, а не обрыв — но только пока на экране пусто; текст, который
+            // уже читают вслух, цикл чтения сохранит.
+            events.append(.failure(.provider("Gemini прервал ответ: \(reason).")))
         }
+        return events
     }
 
     /// Turns a refusal into words meant for the user.

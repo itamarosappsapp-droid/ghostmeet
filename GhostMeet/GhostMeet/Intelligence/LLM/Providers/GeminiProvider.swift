@@ -148,21 +148,29 @@ nonisolated struct GeminiProvider: LLMProvider {
 
         for try await line in response.lines {
             try Task.checkCancellation()
-            switch GeminiWireFormat.decode(line: line) {
-            case .text(let fragment):
-                delivered += fragment.count
-                continuation.yield(fragment)
-            case .failure(let failure):
-                throw failure
-            case .cut(let cutoff):
-                // The text stays: the consumer has already been handed every
-                // fragment, and half an answer beats none. Only the reason is
-                // thrown, and it arrives after the words it explains.
-                throw cutoff
-            case .done:
-                return
-            case .ignored:
-                continue
+            for event in GeminiWireFormat.decode(line: line) {
+                switch event {
+                case .text(let fragment):
+                    delivered += fragment.count
+                    continuation.yield(fragment)
+                case .failure(let failure):
+                    // Отказ стирает карточку — она рисует причину ВМЕСТО текста.
+                    // Пока экран пуст, это правильно; но если пользователь уже
+                    // читает ответ вслух, фраза не должна исчезать у него из-под
+                    // глаз, поэтому поздний отказ становится обрывом.
+                    throw delivered == 0 ? failure : SuggestionCutoff.stopped(failure.message)
+                case .cut(let cutoff):
+                    // The text stays: the consumer has already been handed every
+                    // fragment, and half an answer beats none. Only the reason is
+                    // thrown, and it arrives after the words it explains.
+                    throw cutoff
+                case .done:
+                    // Пустой, но честно закрытый поток — тоже случай, о котором
+                    // надо сказать: рассуждающая модель тратит бюджет на
+                    // невидимые токены и закрывает поток, не сказав ничего.
+                    if delivered == 0 { throw SuggestionCutoff.empty }
+                    return
+                }
             }
         }
 

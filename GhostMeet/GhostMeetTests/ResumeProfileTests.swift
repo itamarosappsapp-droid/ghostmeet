@@ -23,6 +23,9 @@ private final class ResumeModel: LLMProvider, @unchecked Sendable {
     enum Script {
         case answer(String)
         case failure(any Error)
+        /// Ответ доехал и оборвался: так ведёт себя провайдер, упёршийся в
+        /// бюджет на последней строке профиля.
+        case cutAnswer(String, SuggestionCutoff)
     }
 
     let name = "Заглушка"
@@ -52,6 +55,11 @@ private final class ResumeModel: LLMProvider, @unchecked Sendable {
                 continuation.finish()
             case .failure(let error):
                 continuation.finish(throwing: error)
+            case .cutAnswer(let text, let cutoff):
+                for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+                    continuation.yield(String(line) + "\n")
+                }
+                continuation.finish(throwing: cutoff)
             }
         }
     }
@@ -572,6 +580,47 @@ struct ResumeImportTests {
         #expect(store.profile == before, "до «Применить» настройки не тронуты")
         #expect(model.requests.count == 1)
         #expect(model.requests[0].userPrompt.contains("8 лет в бэкенде"))
+    }
+
+    /// Бюджет запроса на профиль — 512 токенов, а последняя строка это стек,
+    /// список технологий через запятую. Оборваться там — обычное дело, и
+    /// выбрасывать из-за этого весь уже разобранный профиль было бы хуже, чем
+    /// показать его с оговоркой. До правки пользователь видел английскую
+    /// системную строку об ошибке Swift и пустой лист.
+    @Test("Ответ оборвался на последней строке — профиль всё равно собран, с оговоркой")
+    func aCutAnswerStillYieldsAProfile() async throws {
+        let files = Scratch()
+        let scratch = ScratchDefaults()
+        defer { files.remove(); scratch.remove() }
+
+        let url = try files.write("Опыт: 8 лет", as: "resume.txt")
+        let store = SettingsStore(defaults: scratch.defaults, secrets: InMemorySecretStore())
+        let importer = ResumeImport()
+
+        await importer.load(url: url, into: store.profile.id) {
+            ResumeModel(.cutAnswer(modelAnswer, .budget))
+        }
+
+        #expect(importer.phase == .review, "разобранный профиль не выбрасывается из-за обрыва")
+        #expect(!importer.draft.isEmpty)
+        #expect(importer.notice?.contains("лимит токенов") == true, "об обрыве сказано по-русски")
+    }
+
+    @Test("Оборвался и ничего не собралось — причина обрыва, а не системная строка")
+    func aCutAnswerThatParsesToNothingExplainsItself() async throws {
+        let files = Scratch()
+        let scratch = ScratchDefaults()
+        defer { files.remove(); scratch.remove() }
+
+        let url = try files.write("Опыт: 8 лет", as: "resume.txt")
+        let store = SettingsStore(defaults: scratch.defaults, secrets: InMemorySecretStore())
+        let importer = ResumeImport()
+
+        await importer.load(url: url, into: store.profile.id) {
+            ResumeModel(.cutAnswer("", .budget))
+        }
+
+        #expect(importer.phase == .failed(SuggestionCutoff.budget.message))
     }
 
     @Test("Применение заполняет тот профиль, который был выбран, и не плодит новых")

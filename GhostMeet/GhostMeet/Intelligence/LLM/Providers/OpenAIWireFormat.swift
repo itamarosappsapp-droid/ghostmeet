@@ -16,8 +16,6 @@ nonisolated enum OpenAIStreamEvent: Equatable, Sendable {
     /// The model stopped before finishing. What arrived stays; the reason is
     /// shown under it.
     case cut(SuggestionCutoff)
-    /// Bookkeeping (role deltas, keep-alive comments, usage) — nothing for the user.
-    case ignored
 }
 
 /// Everything the OpenAI chat-completions dialect does with bytes: how a request
@@ -57,45 +55,53 @@ nonisolated enum OpenAIWireFormat {
 
     // MARK: - Response
 
-    /// Reads one line of the event stream.
+    /// Reads one line of the event stream into everything it carries.
+    ///
+    /// **A list and not one event, because one chunk can carry two facts.** The
+    /// first version of the cutoff logic returned a single event and checked the
+    /// text first, so `finish_reason` sitting on the same chunk as the last
+    /// fragment was never seen — vLLM and a good half of the gateways close a
+    /// stream exactly that way. The consequence was not a missed nicety: the
+    /// stream then ended with no terminal event at all, and a perfectly finished
+    /// answer was reported as a dropped connection.
     ///
     /// Everything that is not a `data:` line — SSE comments such as OpenRouter's
-    /// keep-alive, `event:` lines, blank separators — is ignored on purpose: a
-    /// suggestion must not die because a gateway padded the stream.
-    static func decode(line: String) -> OpenAIStreamEvent {
-        guard let payload = payload(of: line) else { return .ignored }
+    /// keep-alive, `event:` lines, blank separators — yields nothing on purpose:
+    /// a suggestion must not die because a gateway padded the stream.
+    static func decode(line: String) -> [OpenAIStreamEvent] {
+        guard let payload = payload(of: line) else { return [] }
         // Every server in the family closes the stream with this sentinel.
-        if payload == "[DONE]" { return .done }
-        guard let object = json(payload) else { return .ignored }
+        if payload == "[DONE]" { return [.done] }
+        guard let object = json(payload) else { return [] }
 
         // A gateway that fails after the response headers reports it inside the
         // stream; HTTP already said 200, so only the body knows.
-        if object["error"] != nil { return .failure(failure(status: 200, body: payload)) }
+        if object["error"] != nil { return [.failure(failure(status: 200, body: payload))] }
 
-        guard let choices = object["choices"] as? [[String: Any]] else { return .ignored }
+        guard let choices = object["choices"] as? [[String: Any]] else { return [] }
 
+        var events: [OpenAIStreamEvent] = []
         // `reasoning_content` (DeepSeek, Kimi) is skipped rather than shown: the
         // overlay promises the answer inside the pause, and a wall of thinking
         // arriving first is exactly the delay it exists to remove.
         let text = text(in: (choices.first?["delta"] as? [String: Any])?["content"])
-        if !text.isEmpty { return .text(text) }
+        if !text.isEmpty { events.append(.text(text)) }
 
-        // The reason lives on the last chunk, whose delta is empty — which is
-        // why it used to be dropped as bookkeeping. Read after the text and not
-        // before: some gateways put a fragment and the reason in one chunk, and
-        // losing the fragment would cost the end of the answer to report that
-        // the answer ended.
         switch choices.compactMap({ $0["finish_reason"] as? String }).first {
-        case "length": return .cut(.budget)
-        case "content_filter": return .failure(.provider("Провайдер отфильтровал ответ."))
-        // Нормальный конец засчитывается здесь, а не только по `[DONE]`, и это
-        // не мелочь: половина каталога — чужие шлюзы и локальные серверы, часть
-        // из них закрывает поток без sentinel. Без этой ветки штатно
-        // договоривший ответ получал бы строку «соединение закрылось» — ложная
-        // тревога на каждом нажатии, хуже той тишины, которую мы чиним.
-        case "stop", "end_turn", "stop_sequence": return .done
-        default: return .ignored
+        case "length":
+            events.append(.cut(.budget))
+        case "content_filter":
+            // Отказ, а не обрыв — но только пока на экране пусто. Если текст уже
+            // читают вслух, цикл чтения превратит это в обрыв и текст оставит.
+            events.append(.failure(.provider("Провайдер отфильтровал ответ.")))
+        // Нормальный конец засчитывается здесь, а не только по `[DONE]`: часть
+        // каталога — чужие шлюзы и локальные серверы, и не все шлют sentinel.
+        case "stop", "end_turn", "stop_sequence":
+            events.append(.done)
+        default:
+            break
         }
+        return events
     }
 
     /// Turns a refusal into words meant for the user.

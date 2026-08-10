@@ -86,11 +86,23 @@ nonisolated enum SuggestionCutoff: Error, Equatable, Sendable {
     /// well-formed stream, nothing to say.
     case empty
 
+    /// The provider stopped the answer and said why — a moderation filter, a
+    /// gateway error mid-stream, a CLI tool killed by a signal.
+    ///
+    /// **This is what a refusal becomes once any text has reached the screen**,
+    /// and the conversion happens in one place: the read loop, which is the only
+    /// thing that knows whether anything was delivered. Before it existed, a
+    /// filter tripping on the last chunk replaced a half-read answer with an
+    /// orange line — the card renders `.failed` *instead of* the text, and the
+    /// user was reading that text out loud at the time.
+    case stopped(String)
+
     var message: String {
         switch self {
         case .budget: "Ответ оборван: модель упёрлась в лимит токенов. Для длинного ответа нажмите ⌥⌘E."
         case .connection: "Ответ оборван: соединение закрылось раньше, чем модель договорила."
         case .empty: "Модель вернула пустой ответ — попробуйте ещё раз или смените модель в настройках."
+        case .stopped(let reason): "Ответ оборван. \(reason)"
         }
     }
 }

@@ -106,9 +106,10 @@ final class ResumeImport {
 
         phase = .asking
         let answer: String
+        let cutoff: SuggestionCutoff?
         do {
             let model = try provider()
-            answer = try await collect(
+            (answer, cutoff) = try await collect(
                 model.stream(
                     ResumeProfilePrompt.request(
                         resumeText: resume.text,
@@ -130,7 +131,10 @@ final class ResumeImport {
 
         var parsed = UserProfile.parsed(from: answer)
         guard !parsed.isEmpty else {
-            fail("""
+            // Оборвался и не собрался — тогда причина обрыва и есть объяснение,
+            // и она куда полезнее общего «профиль не собрался». Без этой ветки
+            // пользователь получал английскую системную строку об ошибке Swift.
+            fail(cutoff?.message ?? """
             Из ответа модели профиль не собрался: в нём нет ни роли, ни опыта, ни стека. \
             Попробуйте ещё раз, выберите другого провайдера — или заполните поля руками.
             """)
@@ -148,12 +152,21 @@ final class ResumeImport {
         )
 
         draft = parsed
-        notice = resume.isTruncated
-            ? """
+        // Две разные правды, и обе стоит сказать: резюме не влезло целиком — и
+        // ответ модели кончился раньше времени. Профиль при этом собрался, и
+        // выбрасывать его из-за подрезанной последней строки было бы хуже, чем
+        // показать его с оговоркой.
+        var notices: [String] = []
+        if resume.isTruncated {
+            notices.append("""
             Резюме длинное: модель прочитала первые \(ResumeDocument.maxCharacters) символов \
             из \(resume.originalCharacterCount). Проверьте, не потерялось ли что-то важное.
-            """
-            : nil
+            """)
+        }
+        if let cutoff {
+            notices.append("\(cutoff.message) Проверьте последние поля — они могли не дописаться.")
+        }
+        notice = notices.isEmpty ? nil : notices.joined(separator: "\n")
         phase = .review
     }
 
@@ -191,12 +204,26 @@ final class ResumeImport {
         phase = .idle
     }
 
-    /// One-shot collection of a streaming answer. The stream exists because
-    /// suggestions need to appear as they are written; a profile is four lines
-    /// nobody reads mid-flight.
-    private func collect(_ stream: AsyncThrowingStream<String, any Error>) async throws -> String {
+    /// Everything the model said, plus the reason it stopped if it stopped early.
+    ///
+    /// One-shot collection: the stream exists because suggestions need to appear
+    /// as they are written, and a profile is four lines nobody reads mid-flight.
+    ///
+    /// **The cutoff does not throw here, and that is the whole point.** A profile
+    /// is four short lines and the budget is 512 tokens, so the answer that runs
+    /// out of room is the one whose last line — the stack, a comma-separated
+    /// list — got clipped. The first three lines are already correct and parse
+    /// perfectly well; throwing them away to report that the fourth is short
+    /// costs the user the import they were doing, for nothing.
+    private func collect(
+        _ stream: AsyncThrowingStream<String, any Error>
+    ) async throws -> (answer: String, cutoff: SuggestionCutoff?) {
         var answer = ""
-        for try await fragment in stream { answer += fragment }
-        return answer
+        do {
+            for try await fragment in stream { answer += fragment }
+            return (answer, nil)
+        } catch let cutoff as SuggestionCutoff {
+            return (answer, cutoff)
+        }
     }
 }

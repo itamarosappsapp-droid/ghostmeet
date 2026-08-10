@@ -62,6 +62,38 @@ struct LLMProviderTests {
     /// Обычное окончание не должно попадать в обрыв: `end_turn` приходит тем же
     /// событием `message_delta`, что и `max_tokens`, и различать их обязано
     /// поле, а не порядок.
+    /// Классификатор Anthropic останавливает генерацию и возвращает уже
+    /// написанное. Раньше `refusal` попадал в `default: .ignored`, следом
+    /// `message_stop` закрывал поток как нормальный, и половина фразы стояла на
+    /// карточке законченной подсказкой — её читали вслух.
+    @Test("Claude сказал refusal — половина ответа остаётся, но названа обрывом")
+    func aRefusalAfterTextBecomesACutoff() async {
+        let transport = ScriptedTransport(lines: [
+            SSE.text("Я бы вынес это в отдельный сервис и"),
+            #"data: {"type":"message_delta","delta":{"stop_reason":"refusal"}}"#,
+            #"data: {"type":"message_stop"}"#,
+        ])
+        let provider = ClaudeProvider(apiKey: { "sk-test" }, transport: transport)
+
+        let answer = await drain(provider.stream(.fixture()))
+
+        #expect(answer.fragments == ["Я бы вынес это в отдельный сервис и"])
+        #expect(answer.error as? SuggestionCutoff == .stopped("Модель отказалась продолжать."))
+    }
+
+    @Test("Claude упёрся в окно контекста — это тот же обрыв по бюджету")
+    func aContextWindowStopIsABudgetCut() async {
+        let transport = ScriptedTransport(lines: [
+            SSE.text("Половина"),
+            #"data: {"type":"message_delta","delta":{"stop_reason":"model_context_window_exceeded"}}"#,
+        ])
+        let provider = ClaudeProvider(apiKey: { "sk-test" }, transport: transport)
+
+        let answer = await drain(provider.stream(.fixture()))
+
+        #expect(answer.error as? SuggestionCutoff == .budget)
+    }
+
     /// Без `message_stop` намеренно: событие может не доехать, и штатно
     /// договоривший ответ не должен из-за этого получить строку об обрыве.
     @Test("Claude сказал end_turn — это нормальный конец, без строки об обрыве")
@@ -238,7 +270,11 @@ struct LLMProviderTests {
         let answer = await drain(provider.stream(.fixture()))
 
         #expect(answer.fragments == ["Начну отвечать"], "то, что уже пришло, не пропадает")
-        #expect(answer.error as? LLMFailure == .throttled)
+        // Договор «то, что уже пришло, не пропадает» тот же, но теперь он
+        // доезжает до экрана: отказ поверх показанного текста стал обрывом,
+        // потому что карточка при `.failed` рисует причину ВМЕСТО ответа —
+        // и фраза исчезала у пользователя из-под глаз, пока он её читал.
+        #expect(answer.error as? SuggestionCutoff == .stopped(LLMFailure.throttled.message))
     }
 
     @Test("Сеть отвалилась — это ошибка провайдера, а не молчаливо пустая подсказка")

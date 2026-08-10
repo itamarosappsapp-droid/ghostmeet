@@ -16,8 +16,6 @@ nonisolated enum ClaudeStreamEvent: Equatable, Sendable {
     /// The model stopped before finishing. What arrived stays; the reason is
     /// shown under it.
     case cut(SuggestionCutoff)
-    /// Bookkeeping (ping, block boundaries, usage) — nothing for the user.
-    case ignored
 }
 
 /// Everything Claude-specific about the bytes on the wire: how a request is
@@ -56,39 +54,54 @@ nonisolated enum ClaudeWireFormat {
 
     // MARK: - Response
 
-    /// Reads one line of the event stream.
+    /// Reads one line of the event stream into everything it carries.
     ///
     /// Anything that is not a `data:` line, or carries a shape we do not consume,
-    /// is deliberately ignored rather than treated as an error: the stream gains
-    /// event types over time and a suggestion must not die because of one.
-    static func decode(line: String) -> ClaudeStreamEvent {
-        guard let payload = payload(of: line) else { return .ignored }
-        guard let object = json(payload) else { return .ignored }
+    /// yields nothing rather than an error: the stream gains event types over
+    /// time and a suggestion must not die because of one.
+    ///
+    /// A list for symmetry with the other two dialects, where one chunk really
+    /// can hold both a fragment and the reason the answer ended. Claude keeps
+    /// them in separate events, so the lists here are never longer than one —
+    /// but three formats answering the same question in three shapes is how they
+    /// drift apart.
+    static func decode(line: String) -> [ClaudeStreamEvent] {
+        guard let payload = payload(of: line) else { return [] }
+        guard let object = json(payload) else { return [] }
 
         switch object["type"] as? String {
         case "content_block_delta":
             guard let delta = object["delta"] as? [String: Any],
                   delta["type"] as? String == "text_delta",
                   let text = delta["text"] as? String
-            else { return .ignored }
-            return .text(text)
+            else { return [] }
+            return [.text(text)]
         case "error":
-            return .failure(failure(status: 200, body: payload))
+            return [.failure(failure(status: 200, body: payload))]
         case "message_delta":
             // Claude reports how it stopped here, one event before closing the
-            // message. Budget is worth a word; a normal ending is counted as the
-            // close right here rather than left to `message_stop` alone —
-            // a stream that ends without that event would otherwise be reported
-            // as a dropped connection, which is a false alarm on every answer.
+            // message. A normal ending is counted as the close right here rather
+            // than left to `message_stop` alone: a stream that ends without that
+            // event would otherwise be reported as a dropped connection, which
+            // is a false alarm on every answer.
             switch (object["delta"] as? [String: Any])?["stop_reason"] as? String {
-            case "max_tokens": return .cut(.budget)
-            case "end_turn", "stop_sequence": return .done
-            default: return .ignored
+            case "max_tokens", "model_context_window_exceeded":
+                return [.cut(.budget)]
+            case "refusal":
+                // Классификатор остановил генерацию и вернул уже написанное.
+                // Пока текста нет — это отказ; появился текст — цикл чтения
+                // сделает из этого обрыв и текст сохранит.
+                return [.failure(.provider("Модель отказалась продолжать."))]
+            // Всё остальное — нормальный конец. Умолчание намеренно доброе:
+            // список причин у Anthropic растёт, и объявлять незнакомую обрывом
+            // значило бы поднимать тревогу на каждом новом слове в протоколе.
+            default:
+                return [.done]
             }
         case "message_stop":
-            return .done
+            return [.done]
         default:
-            return .ignored
+            return []
         }
     }
 

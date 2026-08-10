@@ -305,6 +305,49 @@ struct GeminiProviderTests {
         #expect(failure?.message.isEmpty == false)
     }
 
+    // MARK: - Причина в том же чанке, что и текст
+
+    /// Ровно та форма, которой Google закрывает `streamGenerateContent?alt=sse`,
+    /// и для короткой подсказки — единственный чанк ответа. Пока `decode`
+    /// возвращал одно событие на строку и проверял текст первым, причина не
+    /// читалась никогда: sentinel `[DONE]` в этом диалекте отсутствует, поэтому
+    /// **каждый** дописанный ответ объявлялся обрывом связи.
+    @Test("Текст и STOP пришли одним чанком — это конец ответа, а не обрыв")
+    func aFinishReasonBesideTheTextClosesTheStream() async {
+        let provider = GeminiProvider(
+            apiKey: { "key" },
+            transport: ScriptedTransport(lines: [
+                GeminiSSE.textAndFinish("Я бы взял составной индекс.", "STOP"),
+            ])
+        )
+
+        let answer = await drainStream(provider.stream(fixture()))
+
+        #expect(answer.fragments == ["Я бы взял составной индекс."])
+        #expect(answer.error == nil, "штатно дописанный ответ обрывом не является")
+    }
+
+    /// Обратная сторона того же дефекта: чанк с `MAX_TOKENS` по природе события
+    /// несёт и последние токены, поэтому отдельного пустого чанка с этой
+    /// причиной сервер не шлёт — и ветка бюджета была в живом трафике
+    /// недостижима, а пользователь вместо «упёрлась в лимит» видел «соединение
+    /// закрылось».
+    @Test("Текст и MAX_TOKENS одним чанком — обрыв назван бюджетом, а не связью")
+    func aBudgetCutBesideTheTextIsNamedCorrectly() async {
+        let provider = GeminiProvider(
+            apiKey: { "key" },
+            transport: ScriptedTransport(lines: [
+                GeminiSSE.text("Начало ответа "),
+                GeminiSSE.textAndFinish("и хвост, обрезанный на", "MAX_TOKENS"),
+            ])
+        )
+
+        let answer = await drainStream(provider.stream(fixture()))
+
+        #expect(answer.fragments == ["Начало ответа ", "и хвост, обрезанный на"])
+        #expect(answer.error as? SuggestionCutoff == .budget)
+    }
+
     @Test("Фильтр остановил ответ посреди генерации — начатое остаётся, дальше ошибка")
     func safetyStopKeepsWhatArrived() async {
         let provider = GeminiProvider(
@@ -318,7 +361,11 @@ struct GeminiProviderTests {
         let answer = await drainStream(provider.stream(fixture()))
 
         #expect(answer.fragments == ["Начну отвечать"])
-        #expect(answer.error as? LLMFailure == .provider("Gemini прервал ответ: SAFETY."))
+        // Договор «то, что уже пришло, не пропадает» тот же, но теперь он
+        // доезжает до экрана: отказ поверх показанного текста стал обрывом,
+        // потому что карточка при `.failed` рисует причину ВМЕСТО ответа —
+        // и фраза исчезала у пользователя из-под глаз, пока он её читал.
+        #expect(answer.error as? SuggestionCutoff == .stopped("Gemini прервал ответ: SAFETY."))
     }
 
     @Test("Запрос отклонён фильтром до генерации — это ошибка, а не пустая подсказка")
@@ -494,6 +541,16 @@ private enum GeminiSSE {
 
     static func finished(_ reason: String) -> String {
         chunk(#"{"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"\#(reason)","index":0}]}"#)
+    }
+
+    /// Настоящая форма закрывающего чанка: текст и причина вместе.
+    ///
+    /// Существующий `finished(_:)` кладёт `"parts":[]` — форму, которой Google в
+    /// норме не присылает, и из-за этого все прежние тесты Gemini проходили мимо
+    /// дефекта: `decode` возвращал текст и терял причину, поток заканчивался без
+    /// закрывающего события, и каждый дописанный ответ объявлялся обрывом связи.
+    static func textAndFinish(_ value: String, _ reason: String) -> String {
+        chunk(#"{"candidates":[{"content":{"role":"model","parts":[{"text":"\#(value)"}]},"finishReason":"\#(reason)","index":0}],"usageMetadata":{"promptTokenCount":12}}"#)
     }
 
     static func chunk(_ json: String) -> String { "data: \(json)" }

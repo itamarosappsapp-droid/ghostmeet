@@ -208,6 +208,44 @@ struct CLIProviderTests {
         }
     }
 
+    /// Инструмент, убитый сигналом посреди ответа, возвращает 15 или 9 — и до
+    /// этой правки половина ответа, которую пользователь читал вслух, исчезала
+    /// с экрана: карточка при отказе рисует причину ВМЕСТО текста.
+    @Test("Инструмент умер посреди ответа — прочитанное остаётся, причина под ним")
+    func aToolDyingMidAnswerKeepsWhatItSaid() async throws {
+        try await withToolDirectory { directory in
+            let tool = try script(
+                in: directory,
+                named: "dying-tool",
+                body: "printf 'Я бы взял составной индекс по статусу и дате, '\nexit 15"
+            )
+            let provider = CLIProvider(
+                name: "Claude CLI",
+                configuration: CLIProvider.Configuration(command: [tool.path], searchPaths: [])
+            )
+
+            let answer = await drainStream(provider.stream(fixture()))
+
+            #expect(answer.fragments.joined() == "Я бы взял составной индекс по статусу и дате, ")
+            let cutoff = try #require(answer.error as? SuggestionCutoff)
+            #expect(cutoff.message.contains("Claude CLI"))
+            #expect(answer.error as? LLMFailure == nil, "отказ стёр бы прочитанное с экрана")
+        }
+    }
+
+    @Test("Инструмент отработал молча и с нулём — сказано, что ответ пуст")
+    func aSilentSuccessIsExplained() async throws {
+        try await withToolDirectory { directory in
+            let tool = try script(in: directory, named: "mute-tool", body: "exit 0")
+            let provider = CLIProvider(
+                name: "Kimi CLI",
+                configuration: CLIProvider.Configuration(command: [tool.path], searchPaths: [])
+            )
+
+            #expect(await drainStream(provider.stream(fixture())).error as? SuggestionCutoff == .empty)
+        }
+    }
+
     // MARK: - Отмена
 
     @Test("Новая реплика отменила подсказку — процесс убит, а не оставлен сиротой")
