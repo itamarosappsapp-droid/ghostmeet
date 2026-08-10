@@ -88,6 +88,12 @@ nonisolated enum OpenAIWireFormat {
         switch choices.compactMap({ $0["finish_reason"] as? String }).first {
         case "length": return .cut(.budget)
         case "content_filter": return .failure(.provider("Провайдер отфильтровал ответ."))
+        // Нормальный конец засчитывается здесь, а не только по `[DONE]`, и это
+        // не мелочь: половина каталога — чужие шлюзы и локальные серверы, часть
+        // из них закрывает поток без sentinel. Без этой ветки штатно
+        // договоривший ответ получал бы строку «соединение закрылось» — ложная
+        // тревога на каждом нажатии, хуже той тишины, которую мы чиним.
+        case "stop", "end_turn", "stop_sequence": return .done
         default: return .ignored
         }
     }

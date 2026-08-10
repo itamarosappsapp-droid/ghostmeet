@@ -62,12 +62,13 @@ struct LLMProviderTests {
     /// Обычное окончание не должно попадать в обрыв: `end_turn` приходит тем же
     /// событием `message_delta`, что и `max_tokens`, и различать их обязано
     /// поле, а не порядок.
+    /// Без `message_stop` намеренно: событие может не доехать, и штатно
+    /// договоривший ответ не должен из-за этого получить строку об обрыве.
     @Test("Claude сказал end_turn — это нормальный конец, без строки об обрыве")
     func aNormalStopIsNotACutoff() async {
         let transport = ScriptedTransport(lines: [
             SSE.text("Целый ответ"),
             #"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}"#,
-            #"data: {"type":"message_stop"}"#,
         ])
         let provider = ClaudeProvider(apiKey: { "sk-test" }, transport: transport)
 

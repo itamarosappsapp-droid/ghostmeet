@@ -76,12 +76,15 @@ nonisolated enum ClaudeWireFormat {
             return .failure(failure(status: 200, body: payload))
         case "message_delta":
             // Claude reports how it stopped here, one event before closing the
-            // message. `end_turn` and `stop_sequence` are normal endings and are
-            // left to `message_stop`; only the budget is worth a word.
-            guard let delta = object["delta"] as? [String: Any],
-                  delta["stop_reason"] as? String == "max_tokens"
-            else { return .ignored }
-            return .cut(.budget)
+            // message. Budget is worth a word; a normal ending is counted as the
+            // close right here rather than left to `message_stop` alone —
+            // a stream that ends without that event would otherwise be reported
+            // as a dropped connection, which is a false alarm on every answer.
+            switch (object["delta"] as? [String: Any])?["stop_reason"] as? String {
+            case "max_tokens": return .cut(.budget)
+            case "end_turn", "stop_sequence": return .done
+            default: return .ignored
+            }
         case "message_stop":
             return .done
         default:

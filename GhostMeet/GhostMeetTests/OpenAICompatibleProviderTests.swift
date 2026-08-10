@@ -84,6 +84,26 @@ struct OpenAICompatibleProviderTests {
         #expect(answer.error as? SuggestionCutoff == .budget)
     }
 
+    /// Ложная тревога опаснее той тишины, которую всё это чинит: половина
+    /// каталога — чужие шлюзы и локальные серверы, и не все закрывают поток
+    /// sentinel-строкой. Штатно договоривший ответ не должен получать строку
+    /// «соединение закрылось».
+    @Test("Штатное окончание без [DONE] обрывом не считается")
+    func aNormalFinishWithoutTheSentinelIsNotACutoff() async throws {
+        let provider = try makeProvider(
+            presetID: "openai",
+            transport: ChunkTransport(lines: [
+                Chunk.text("Целый ответ"),
+                #"data: {"choices":[{"delta":{},"finish_reason":"stop"}]}"#,
+            ])
+        )
+
+        let answer = await collect(provider.stream(.sample()))
+
+        #expect(answer.fragments == ["Целый ответ"])
+        #expect(answer.error == nil)
+    }
+
     @Test("Поток закрылся, не сказав ни слова — это не пустая подсказка молча")
     func anEmptyStreamIsReported() async throws {
         let provider = try makeProvider(
