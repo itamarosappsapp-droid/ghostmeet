@@ -74,6 +74,8 @@ nonisolated struct CLIProvider: LLMProvider {
                     continuation.finish()
                 } catch is CancellationError {
                     continuation.finish(throwing: CancellationError())
+                } catch let cutoff as SuggestionCutoff {
+                    continuation.finish(throwing: cutoff)
                 } catch let failure as LLMFailure {
                     continuation.finish(throwing: failure)
                 } catch {
@@ -135,14 +137,15 @@ nonisolated struct CLIProvider: LLMProvider {
         into continuation: AsyncThrowingStream<String, any Error>.Continuation
     ) async throws {
         var text = IncrementalUTF8Text()
+        var delivered = 0
 
         for await chunk in stdout {
             try Task.checkCancellation()
             let fragment = text.append(chunk)
-            if !fragment.isEmpty { continuation.yield(fragment) }
+            if !fragment.isEmpty { delivered += fragment.count; continuation.yield(fragment) }
         }
         let tail = text.flush()
-        if !tail.isEmpty { continuation.yield(tail) }
+        if !tail.isEmpty { delivered += tail.count; continuation.yield(tail) }
 
         let status = await process.waitForExit()
         // A killed tool exits non-zero; that is the cancellation, not a failure
@@ -152,6 +155,10 @@ nonisolated struct CLIProvider: LLMProvider {
         guard status == 0 else {
             throw LLMFailure.provider(failureMessage(status: status, from: process))
         }
+        // Exited cleanly and said nothing. Rarer than over HTTP but not
+        // impossible — a tool that has lost its session prints its complaint to
+        // stderr and returns zero — and an empty card explains none of it.
+        if delivered == 0 { throw SuggestionCutoff.empty }
     }
 
     /// What the tool said on stderr — "not logged in", "quota exceeded" — is far

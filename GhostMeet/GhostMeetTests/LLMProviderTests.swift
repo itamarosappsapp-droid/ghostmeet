@@ -33,14 +33,47 @@ struct LLMProviderTests {
         #expect(answer.fragments == ["Расскажу ", "про GCD."], "служебные события подсказкой не становятся")
     }
 
-    @Test("Поток оборвался без message_stop — то, что успело прийти, остаётся подсказкой")
-    func truncatedStreamKeepsWhatArrived() async {
+    @Test("Поток оборвался без message_stop — текст остаётся, и об обрыве сказано")
+    func truncatedStreamKeepsWhatArrivedAndSaysSo() async {
         let transport = ScriptedTransport(lines: [SSE.text("Начало ответа")])
         let provider = ClaudeProvider(apiKey: { "sk-test" }, transport: transport)
 
         let answer = await drain(provider.stream(.fixture()))
 
         #expect(answer.fragments == ["Начало ответа"])
+        #expect(answer.error as? SuggestionCutoff == .connection)
+    }
+
+    @Test("Claude сказал max_tokens — ответ оборван бюджетом, а не дописан")
+    func hittingTheBudgetIsReported() async {
+        let transport = ScriptedTransport(lines: [
+            SSE.text("Половина ответа"),
+            #"data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"}}"#,
+            #"data: {"type":"message_stop"}"#,
+        ])
+        let provider = ClaudeProvider(apiKey: { "sk-test" }, transport: transport)
+
+        let answer = await drain(provider.stream(.fixture()))
+
+        #expect(answer.fragments == ["Половина ответа"])
+        #expect(answer.error as? SuggestionCutoff == .budget)
+    }
+
+    /// Обычное окончание не должно попадать в обрыв: `end_turn` приходит тем же
+    /// событием `message_delta`, что и `max_tokens`, и различать их обязано
+    /// поле, а не порядок.
+    @Test("Claude сказал end_turn — это нормальный конец, без строки об обрыве")
+    func aNormalStopIsNotACutoff() async {
+        let transport = ScriptedTransport(lines: [
+            SSE.text("Целый ответ"),
+            #"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}"#,
+            #"data: {"type":"message_stop"}"#,
+        ])
+        let provider = ClaudeProvider(apiKey: { "sk-test" }, transport: transport)
+
+        let answer = await drain(provider.stream(.fixture()))
+
+        #expect(answer.fragments == ["Целый ответ"])
         #expect(answer.error == nil)
     }
 

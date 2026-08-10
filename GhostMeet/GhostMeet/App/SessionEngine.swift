@@ -660,6 +660,13 @@ final class SessionEngine {
             } catch is CancellationError {
                 // Superseded by a newer press; whoever cancelled owns the state.
                 return
+            } catch let cutoff as SuggestionCutoff {
+                // Not a failure: whatever arrived is already in the card and
+                // stays there. Only the reason is added, under the text it
+                // explains — until now an answer cut mid-word looked exactly
+                // like a model that had answered briefly.
+                guard !Task.isCancelled else { return }
+                self?.settle(id, as: .cut(cutoff.message))
             } catch {
                 // Reported in the feed and nowhere else. A system notification
                 // would be drawn over the shared screen (ADR-0004).

@@ -13,6 +13,9 @@ nonisolated enum OpenAIStreamEvent: Equatable, Sendable {
     case failure(LLMFailure)
     /// The model finished on its own.
     case done
+    /// The model stopped before finishing. What arrived stays; the reason is
+    /// shown under it.
+    case cut(SuggestionCutoff)
     /// Bookkeeping (role deltas, keep-alive comments, usage) — nothing for the user.
     case ignored
 }
@@ -69,15 +72,24 @@ nonisolated enum OpenAIWireFormat {
         // stream; HTTP already said 200, so only the body knows.
         if object["error"] != nil { return .failure(failure(status: 200, body: payload)) }
 
-        guard let choices = object["choices"] as? [[String: Any]],
-              let delta = choices.first?["delta"] as? [String: Any]
-        else { return .ignored }
+        guard let choices = object["choices"] as? [[String: Any]] else { return .ignored }
 
         // `reasoning_content` (DeepSeek, Kimi) is skipped rather than shown: the
         // overlay promises the answer inside the pause, and a wall of thinking
         // arriving first is exactly the delay it exists to remove.
-        let text = text(in: delta["content"])
-        return text.isEmpty ? .ignored : .text(text)
+        let text = text(in: (choices.first?["delta"] as? [String: Any])?["content"])
+        if !text.isEmpty { return .text(text) }
+
+        // The reason lives on the last chunk, whose delta is empty — which is
+        // why it used to be dropped as bookkeeping. Read after the text and not
+        // before: some gateways put a fragment and the reason in one chunk, and
+        // losing the fragment would cost the end of the answer to report that
+        // the answer ended.
+        switch choices.compactMap({ $0["finish_reason"] as? String }).first {
+        case "length": return .cut(.budget)
+        case "content_filter": return .failure(.provider("Провайдер отфильтровал ответ."))
+        default: return .ignored
+        }
     }
 
     /// Turns a refusal into words meant for the user.

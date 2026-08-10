@@ -155,6 +155,7 @@ private struct SuggestionCard: View {
         case .streaming: "печатается"
         case .complete: "подсказка"
         case .superseded: "устарела"
+        case .cut: "оборвана"
         case .failed: "не получилось"
         }
     }
@@ -164,6 +165,9 @@ private struct SuggestionCard: View {
         case .streaming: .accentColor
         case .complete: isLatest ? .accentColor : .secondary
         case .superseded: .secondary
+        // Тем же жёлтым, что и отказ, но заголовок другой: ответ на месте и его
+        // можно читать вслух, просто он не дописан.
+        case .cut: .orange
         case .failed: .orange
         }
     }
@@ -210,7 +214,28 @@ private struct SuggestionCard: View {
                 // its second of latency back on the first line arriving early).
                 SuggestionMarkupView(text: suggestion.text)
             }
+            // Причина обрыва идёт ПОД текстом, а не вместо него: половина
+            // ответа читается вслух и стоит того, чтобы её видеть, а строка
+            // объясняет, почему фраза кончилась на полуслове.
+            if case .cut(let reason) = suggestion.state {
+                cutLine(reason)
+            }
         }
+    }
+
+    /// Почему ответ кончился раньше, чем модель договорила.
+    ///
+    /// Не `noticeLine`: та говорит об условиях, при которых ответ собирался, и
+    /// стоит над ним. Эта строка — о том, что с самим ответом, и стоит под ним.
+    private func cutLine(_ text: String) -> some View {
+        Label {
+            Text(text)
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "scissors")
+        }
+        .font(.system(size: 10))
+        .foregroundStyle(.orange)
     }
 
     // MARK: - Chrome

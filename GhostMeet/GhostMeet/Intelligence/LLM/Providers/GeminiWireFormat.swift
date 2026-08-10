@@ -13,6 +13,9 @@ nonisolated enum GeminiStreamEvent: Equatable, Sendable {
     case failure(LLMFailure)
     /// The model finished on its own.
     case done
+    /// The model stopped before finishing. What arrived stays; the reason is
+    /// shown under it.
+    case cut(SuggestionCutoff)
     /// Bookkeeping (usage, safety ratings, thought summaries) — nothing for the user.
     case ignored
 }
@@ -124,8 +127,13 @@ nonisolated enum GeminiWireFormat {
             return .ignored
         }
         switch reason {
-        case "STOP", "MAX_TOKENS":
+        case "STOP":
             return .done
+        // Used to be folded into `STOP`, and that is exactly the defect this
+        // whole change exists for: an answer that ran out of budget closed the
+        // stream as if the model had finished its sentence.
+        case "MAX_TOKENS":
+            return .cut(.budget)
         default:
             return .failure(.provider("Gemini прервал ответ: \(reason)."))
         }

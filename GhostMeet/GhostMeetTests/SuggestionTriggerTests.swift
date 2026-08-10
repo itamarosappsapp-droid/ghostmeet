@@ -89,6 +89,60 @@ struct SuggestionTriggerTests {
         #expect(call.provider.requests.count == 1)
     }
 
+    // MARK: - Оборванный ответ
+
+    /// Пока приложение этого не умело, оборванная на полуслове подсказка
+    /// выглядела на карточке ровно как короткая — и разницу пользователь узнавал,
+    /// уже произнося половину фразы вслух.
+    @Test("Ответ оборвался — текст остаётся, а причина стоит под ним")
+    func aCutAnswerKeepsItsTextAndSaysWhy() async {
+        let provider = StubLLMProvider(.manual)
+        let call = SuggestionCall(provider: provider, recognisesAs: "что такое B-tree")
+
+        call.says(.them)
+        call.engine.suggestBriefly()
+        #expect(await call.modelWasAsked(1))
+        provider.emit("Я бы взял составной индекс по статусу и дате, ")
+        provider.cut(.connection)
+        await call.engine.waitForSuggestion()
+
+        let suggestion = call.engine.suggestions.last
+        #expect(suggestion?.text == "Я бы взял составной индекс по статусу и дате, ")
+        #expect(suggestion?.state == .cut(SuggestionCutoff.connection.message))
+    }
+
+    @Test("Обрыв по бюджету — это не отказ: подсказка не помечается как несостоявшаяся")
+    func aBudgetCutIsNotAFailure() async {
+        let provider = StubLLMProvider(.manual)
+        let call = SuggestionCall(provider: provider, recognisesAs: "что такое B-tree")
+
+        call.says(.them)
+        call.engine.suggestBriefly()
+        #expect(await call.modelWasAsked(1))
+        provider.emit("Половина ответа")
+        provider.cut(.budget)
+        await call.engine.waitForSuggestion()
+
+        let state = call.engine.suggestions.last?.state
+        #expect(state == .cut(SuggestionCutoff.budget.message))
+        if case .failed = state { Issue.record("обрыв по бюджету не должен быть отказом") }
+    }
+
+    @Test("Модель не сказала ни слова — сказано, что ответ пуст, а не пустая карточка")
+    func anEmptyAnswerIsExplained() async {
+        let provider = StubLLMProvider(.manual)
+        let call = SuggestionCall(provider: provider, recognisesAs: "что такое B-tree")
+
+        call.says(.them)
+        call.engine.suggestBriefly()
+        #expect(await call.modelWasAsked(1))
+        provider.cut(.empty)
+        await call.engine.waitForSuggestion()
+
+        #expect(call.engine.suggestions.last?.text.isEmpty == true)
+        #expect(call.engine.suggestions.last?.state == .cut(SuggestionCutoff.empty.message))
+    }
+
     // MARK: - Два жанра
 
     @Test("Коротко и подробно — это разные промпты и разные бюджеты")
@@ -364,5 +418,11 @@ private final class StubLLMProvider: LLMProvider, @unchecked Sendable {
     /// The model finished writing.
     func finish() {
         lock.withLock { continuation }?.finish()
+    }
+
+    /// The answer stopped before the model finished saying it — the reason
+    /// arrives after the words, exactly as a real provider delivers it.
+    func cut(_ cutoff: SuggestionCutoff) {
+        lock.withLock { continuation }?.finish(throwing: cutoff)
     }
 }

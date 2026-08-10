@@ -13,6 +13,9 @@ nonisolated enum ClaudeStreamEvent: Equatable, Sendable {
     case failure(LLMFailure)
     /// The model finished on its own.
     case done
+    /// The model stopped before finishing. What arrived stays; the reason is
+    /// shown under it.
+    case cut(SuggestionCutoff)
     /// Bookkeeping (ping, block boundaries, usage) — nothing for the user.
     case ignored
 }
@@ -71,6 +74,14 @@ nonisolated enum ClaudeWireFormat {
             return .text(text)
         case "error":
             return .failure(failure(status: 200, body: payload))
+        case "message_delta":
+            // Claude reports how it stopped here, one event before closing the
+            // message. `end_turn` and `stop_sequence` are normal endings and are
+            // left to `message_stop`; only the budget is worth a word.
+            guard let delta = object["delta"] as? [String: Any],
+                  delta["stop_reason"] as? String == "max_tokens"
+            else { return .ignored }
+            return .cut(.budget)
         case "message_stop":
             return .done
         default:

@@ -106,6 +106,11 @@ nonisolated struct GeminiProvider: LLMProvider {
                     continuation.finish(throwing: CancellationError())
                 } catch let error as URLError where error.code == .cancelled {
                     continuation.finish(throwing: CancellationError())
+                } catch let cutoff as SuggestionCutoff {
+                    // Проходит насквозь, как и `LLMFailure`: сессия отличает
+                    // оборванный ответ от несостоявшегося по типу ошибки, и
+                    // заворачивать его в `.provider` значило бы стереть разницу.
+                    continuation.finish(throwing: cutoff)
                 } catch let failure as LLMFailure {
                     continuation.finish(throwing: failure)
                 } catch {
@@ -135,19 +140,33 @@ nonisolated struct GeminiProvider: LLMProvider {
             )
         }
 
+        // Counts what actually reached the user. Falling out of the loop below
+        // means the provider never closed the stream — a connection dropped
+        // mid-sentence, which until now was indistinguishable from a model that
+        // simply stopped talking. See `SuggestionCutoff`.
+        var delivered = 0
+
         for try await line in response.lines {
             try Task.checkCancellation()
             switch GeminiWireFormat.decode(line: line) {
             case .text(let fragment):
+                delivered += fragment.count
                 continuation.yield(fragment)
             case .failure(let failure):
                 throw failure
+            case .cut(let cutoff):
+                // The text stays: the consumer has already been handed every
+                // fragment, and half an answer beats none. Only the reason is
+                // thrown, and it arrives after the words it explains.
+                throw cutoff
             case .done:
                 return
             case .ignored:
                 continue
             }
         }
+
+        throw delivered == 0 ? SuggestionCutoff.empty : SuggestionCutoff.connection
     }
 
     private func urlRequest(for request: SuggestionRequest, key: String) throws -> URLRequest {

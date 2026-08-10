@@ -22,6 +22,14 @@ nonisolated struct Suggestion: Identifiable, Equatable, Sendable {
         /// waiting for (ADR-0008). Whatever arrived stays on screen — the feed
         /// keeps history — but nothing more will be appended.
         case superseded
+        /// The model stopped before finishing. **Not a failure:** the text that
+        /// arrived is on screen and readable, and the reason stands under it.
+        ///
+        /// A separate state and not `.failed` because the user does different
+        /// things with them. A failure means there is nothing to say and the
+        /// press is to be repeated; a cut answer is half of a usable one, said
+        /// out loud as far as it goes while the rest is asked for again.
+        case cut(String)
         /// It could not be produced. Shown inside the overlay window only.
         case failed(String)
     }

@@ -58,6 +58,43 @@ nonisolated protocol LLMProvider: Sendable {
     func stream(_ request: SuggestionRequest) -> AsyncThrowingStream<String, any Error>
 }
 
+/// Why an answer stopped before the model finished saying it.
+///
+/// **Separate from `LLMFailure` because it is not a failure.** The request went
+/// out, the model replied, and what arrived is usable — it just is not the whole
+/// thing. Reporting it as an error would throw away text the user can read;
+/// reporting nothing at all is what the app did until now, and that is worse:
+/// an answer cut mid-word is indistinguishable from a model that answered
+/// briefly, so the user reads half a sentence out loud and finds out on air.
+///
+/// Measured on the bench: one run of seven came back cut at «setTimeout
+/// (сет-тайм-аут) попада», with no usage and no closing event. Nothing in the
+/// app noticed.
+nonisolated enum SuggestionCutoff: Error, Equatable, Sendable {
+
+    /// The model ran into `maxTokens`. The one case the user can act on — the
+    /// budget belongs to the genre, and a detailed answer has eight times the
+    /// room of a short one.
+    case budget
+
+    /// The stream ended without the provider ever closing it. A dropped
+    /// connection, a gateway timing out, a proxy cutting an idle socket.
+    case connection
+
+    /// The stream closed properly and carried no answer at all. Reasoning models
+    /// do this when the budget is spent on invisible tokens: HTTP 200, a
+    /// well-formed stream, nothing to say.
+    case empty
+
+    var message: String {
+        switch self {
+        case .budget: "Ответ оборван: модель упёрлась в лимит токенов. Для длинного ответа нажмите ⌥⌘E."
+        case .connection: "Ответ оборван: соединение закрылось раньше, чем модель договорила."
+        case .empty: "Модель вернула пустой ответ — попробуйте ещё раз или смените модель в настройках."
+        }
+    }
+}
+
 /// Why a suggestion could not be produced, in words meant for the user.
 ///
 /// Never surfaced as a system notification: the banner would be drawn over

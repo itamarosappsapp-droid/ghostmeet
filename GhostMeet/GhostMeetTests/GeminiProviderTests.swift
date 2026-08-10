@@ -71,6 +71,9 @@ struct GeminiProviderTests {
                 GeminiSSE.chunk(#"{"usageMetadata":{"promptTokenCount":12}}"#),
                 GeminiSSE.chunk(#"{"candidates":[{"safetyRatings":[{"category":"HARM_CATEGORY_HARASSMENT","probability":"NEGLIGIBLE"}]}]}"#),
                 GeminiSSE.text("Ответ."),
+                // Закрывающий чанк дописан намеренно: тест про служебные строки,
+                // а не про обрыв, и без него он проверял бы теперь второе.
+                GeminiSSE.finished("STOP"),
             ])
         )
 
@@ -331,7 +334,11 @@ struct GeminiProviderTests {
         #expect(answer.error as? LLMFailure == .provider("Gemini отклонил запрос: SAFETY."))
     }
 
-    @Test("Ответ упёрся в лимит токенов — это конец подсказки, а не ошибка")
+    /// Решение прежнее и не пересматривалось: упереться в бюджет — **не ошибка**,
+    /// текст остаётся подсказкой и читается вслух. Изменился только механизм:
+    /// раньше это молча выдавалось за нормальное окончание ответа, теперь под
+    /// текстом стоит причина. `LLMFailure` тут по-прежнему быть не должно.
+    @Test("Ответ упёрся в лимит токенов — не ошибка, но об обрыве сказано")
     func hittingTheTokenBudgetIsNotAFailure() async {
         let provider = GeminiProvider(
             apiKey: { "key" },
@@ -344,7 +351,8 @@ struct GeminiProviderTests {
         let answer = await drainStream(provider.stream(fixture()))
 
         #expect(answer.fragments == ["Длинный ответ"])
-        #expect(answer.error == nil)
+        #expect(answer.error as? LLMFailure == nil, "обрыв по бюджету — не отказ провайдера")
+        #expect(answer.error as? SuggestionCutoff == .budget)
     }
 
     @Test("Сеть отвалилась — это ошибка провайдера, а не молчаливо пустая подсказка")

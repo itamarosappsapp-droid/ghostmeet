@@ -50,8 +50,8 @@ struct OpenAICompatibleProviderTests {
         #expect(await collect(provider.stream(.sample())).fragments == ["Ответ"])
     }
 
-    @Test("Поток оборвался без [DONE] — то, что успело прийти, остаётся подсказкой")
-    func truncatedStreamKeepsWhatArrived() async throws {
+    @Test("Поток оборвался без [DONE] — текст остаётся, и об обрыве сказано")
+    func truncatedStreamKeepsWhatArrivedAndSaysSo() async throws {
         let provider = try makeProvider(
             presetID: "openai",
             transport: ChunkTransport(lines: [Chunk.text("Начало ответа")])
@@ -59,8 +59,42 @@ struct OpenAICompatibleProviderTests {
 
         let answer = await collect(provider.stream(.sample()))
 
+        // Половина ответа по-прежнему доезжает до пользователя — это половина
+        // договора и она не менялась.
         #expect(answer.fragments == ["Начало ответа"])
-        #expect(answer.error == nil)
+        // Вторая половина новая: раньше здесь было `nil`, и оборванный на
+        // полуслове ответ выглядел на карточке как короткий.
+        #expect(answer.error as? SuggestionCutoff == .connection)
+    }
+
+    @Test("Модель упёрлась в лимит токенов — сказано, что ответ оборван бюджетом")
+    func hittingTheBudgetIsReported() async throws {
+        let provider = try makeProvider(
+            presetID: "openai",
+            transport: ChunkTransport(lines: [
+                Chunk.text("Половина ответа"),
+                #"data: {"choices":[{"delta":{},"finish_reason":"length"}]}"#,
+                Chunk.done,
+            ])
+        )
+
+        let answer = await collect(provider.stream(.sample()))
+
+        #expect(answer.fragments == ["Половина ответа"])
+        #expect(answer.error as? SuggestionCutoff == .budget)
+    }
+
+    @Test("Поток закрылся, не сказав ни слова — это не пустая подсказка молча")
+    func anEmptyStreamIsReported() async throws {
+        let provider = try makeProvider(
+            presetID: "openai",
+            transport: ChunkTransport(lines: [Chunk.usageOnly])
+        )
+
+        let answer = await collect(provider.stream(.sample()))
+
+        #expect(answer.fragments.isEmpty)
+        #expect(answer.error as? SuggestionCutoff == .empty)
     }
 
     // MARK: - Форма запроса
