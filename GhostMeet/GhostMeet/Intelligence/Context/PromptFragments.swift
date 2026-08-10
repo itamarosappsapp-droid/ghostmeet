@@ -166,60 +166,69 @@ nonisolated enum PromptFragment {
     /// The rule that makes a term sayable, shared by every mode whose answer is
     /// read out loud (note 6).
     ///
-    /// **Every clause here replaces one that failed on a live model.** The
-    /// previous wording carried two «только» («Только при первом упоминании и
-    /// только там, где произношение неочевидно») and a soothing tail («Скобка —
-    /// подсказка глазам»), and out of ~14 terms in four answers exactly three got
-    /// a bracket: the model read the qualifier as permission to decide for itself
-    /// and decided that Redis, TTL, Postgres and O(N log N) were obvious. A
-    /// reservation of the form «только там, где это уместно» is always read as
-    /// permission not to comply. Hence the absolute trigger: Latin in the line →
-    /// bracket, no judgement call.
+    /// **The rule has no negative examples any more, and that is its whole
+    /// point.** Three redactions in a row tried to forbid a shape by printing it:
+    /// «и „бакеты (бакеты)“ — мусор», «не оригинал латиницей („промис
+    /// (promise)“)», «не по слогам („мак-ро-таск“)». Each repaired the shape it
+    /// named and taught the neighbouring one, and the third was measured
+    /// properly: five models out of five, twelve spoiled brackets out of
+    /// twenty-one, and **four of the twelve are verbatim copies of strings that
+    /// existed only as prohibitions here** — «микротаски (микротаски)» came back
+    /// from three different models, «промис (promise)» from a fourth. The other
+    /// eight are the same shape applied to the neighbouring word.
     ///
-    /// The clauses after the trigger are not padding — each one repairs damage
-    /// the absolute rule itself caused in trials:
+    /// The conclusion is not about wording. A weak instruction-follower reads a
+    /// prohibited example as a demonstration, so a rule that shows the failure
+    /// *is* the failure's source, however firmly it is negated. The register
+    /// frame gets away with a «не так / а так» pair because both halves are whole
+    /// sentences from somebody else's conversation — copying one is visible. A
+    /// two-word bracket is not: «микротаски (микротаски)» drops into an answer
+    /// about the event loop and reads as if the model wrote it.
     ///
-    /// - «В скобке только русские буквы» — one variant produced «с фича-флагом
-    ///   (feature flag)»: bracket present, contents inverted.
-    /// - «Термин, написанный кириллицей, скобки не требует» — another produced
-    ///   «хеш-мапу (хеш-мапа)» and «бакеты (бакеты)», pure noise; later
-    ///   gemini-3.1-flash-lite added «Промис (промис)» and «стека (стэка)» to the
-    ///   list. Prose alone was not enough — this is the longest paragraph in the
-    ///   prompt and everything after the unconditional trigger reads as
-    ///   background — so the clause now carries the wrong shape as well as the
-    ///   rule: «и „бакеты (бакеты)“ — мусор».
+    /// What replaces them is positional. The alphabet test lives **inside** the
+    /// trigger — «сразу за латинскими буквами — и только за ними» — so the rule
+    /// does not fire on Cyrillic at all, rather than firing and then being told
+    /// not to. All twelve measured failures have Cyrillic to the left of the
+    /// bracket, so a rule that cannot start there closes every one of them
+    /// without printing a single broken pair. The three cases are then *shown*
+    /// on Kubernetes and «кластер» — Latin takes a bracket, Cyrillic does not,
+    /// a repeat goes bare — which demonstrates the absence of a bracket instead
+    /// of prohibiting its presence.
     ///
-    ///   **The word in that example must not be one an answer could use.** A
-    ///   draft printed the observed failures verbatim («промис (промис)»,
-    ///   «стека (стэка)»), and a live run of the very question they came from
-    ///   answered «Промис (promise)» — a bracket on a Cyrillic word again, this
-    ///   time with the Latin original inside it. The example had taught the model
-    ///   that this particular word takes a bracket, and it filled the bracket
-    ///   with the only thing left. «Бакеты» cannot show up in an answer about the
-    ///   event loop, an index or a team conflict.
-    /// - «Есть обычное русское слово — пиши сразу по-русски» — the hard trigger
-    ///   made a model *insert* English where it would have said it in Russian
-    ///   («живой ecosystem (экосистема)», «рублей net (нет)»), which is worse
-    ///   than the disease.
-    /// - «дефис делит термин на слова, а не на слоги» — «(мак-ро-таск)»,
-    ///   «(и-вент луп)». The rule had never mentioned syllables; it had, however,
-    ///   *taught* them, since all eighteen positive samples are hyphenated
-    ///   («би-три», «энджин-икс», «зэт-юнион-стор») and nothing bounded how many
-    ///   hyphens a bracket may hold. The bound is now written down.
-    /// - «рублей net (нет)», «живой ecosystem (экосистема)» — the hard trigger
-    ///   made a model *insert* English where it would have said it in Russian,
-    ///   which is worse than the disease.
-    /// - «(мак-ро-таск)», «(и-вент луп)» — syllable-splitting the rule had never
-    ///   mentioned. It had, however, *taught* it: all eighteen positive samples
-    ///   are hyphenated («би-три», «энджин-икс», «зэт-юнион-стор»), so a hyphen
-    ///   inside a bracket is the house style and nothing bounded how many. The
-    ///   bound is now written down — a hyphen separates the words of a term,
-    ///   never its syllables.
+    /// What survives from earlier redactions, and why:
+    ///
+    /// - The unconditional trigger with the right to judge explicitly removed
+    ///   («Решать, очевидно ли произношение, не нужно»). Its predecessor carried
+    ///   two «только» and got brackets on three terms out of ~14: a reservation
+    ///   of the form «только там, где это уместно» is read as permission not to
+    ///   comply.
+    /// - «Есть обычное русское слово — пиши сразу по-русски». Without it the
+    ///   hard trigger made a model *insert* English to earn a bracket («живой
+    ///   ecosystem (экосистема)», «рублей net (нет)»), which is worse than the
+    ///   disease.
+    /// - The hyphen bound, now phrased as what a hyphen *does* divide — words of
+    ///   a term or letters of an abbreviation — rather than as a ban on
+    ///   syllables. Syllable-splitting was never mentioned by any rule; it was
+    ///   taught, because every positive sample is hyphenated and nothing bounded
+    ///   how many hyphens a bracket may hold.
+    /// - `GiST (джист)`, the one sample that proves the bracket carries live
+    ///   speech rather than letter-by-letter transliteration.
+    ///
+    /// `camelCase (кэмел-кейс)` and «имя из кода» are the one addition: two
+    /// models out of five left `setTimeout` and `then` bare, and identifiers are
+    /// exactly what a screen task produces endlessly. The sample is from naming
+    /// conventions rather than from any trial question, so copying it would show.
+    ///
+    /// The list is nine pairs, down from fifteen. What was cut was recognition
+    /// fodder — a term the model matches against the list is not obeying the
+    /// rule, and `microtask queue (майкротаск-кью)` in particular was scoring
+    /// itself: it sat in the prompt verbatim and counted as a success in the very
+    /// run it was copied into.
     ///
     /// The code exception is structural: `Assist` answers a screen task with a
     /// fenced block, and nobody reads an identifier out loud.
     static let pronunciation = """
-    Пользователь читает твой текст вслух, поэтому **слово, написанное латиницей, получает скобку с русским произношением** — тем, как это говорят в русскоязычной IT-среде, а не побуквенной транслитерацией: B-tree (би-три), GiST (джист), nginx (энджин-икс), PostgreSQL (постгрес), MongoDB (монго), Kubernetes (кубернетис), hash map (хеш-мапа), microtask queue (майкротаск-кью), min-heap (мин-хип), TTL (ти-ти-эль), created_at (крейтед-эт), user_id (юзер-айди), O(1) (о от единицы), O(log n) (о от лог эн), O(n log n) (о от эн лог эн). Решать, очевидно ли произношение, не нужно: увидел латиницу — поставил скобку, **один раз за ответ и одну на весь термин целиком**, каким бы длинным он ни был. Скобку получает только латиница: написал по-русски — скобки нет вовсе, «микротаски (микротаски)» и «бакеты (бакеты)» мусор. В скобке русское произношение целиком — не оригинал латиницей («промис (promise)», «макро-таски (macro-tasks)») и не по слогам («мак-ро-таск»). Формулу читай ровно так, как написана, и не приписывай букв, которых в ней нет. Есть обычное русское слово — пиши сразу по-русски («экосистема», «на руки»), латиницу ради скобки не вставляй. В блоке кода скобок не ставь: код не произносят.
+    Пользователь читает твой текст вслух, а латиницу вслух не прочесть: **сразу за латинскими буквами — и только за ними — идёт скобка, и вслух вместо них пойдёт её содержимое**, как термин говорят в русскоязычной IT-среде, а не по буквам оригинала: B-tree (би-три), GiST (джист), nginx (энджин-икс), PostgreSQL (постгрес), hash map (хеш-мапа), camelCase (кэмел-кейс), TTL (ти-ти-эль), created_at (крейтед-эт), O(n log n) (о от эн лог эн). Решать, очевидно ли произношение, не нужно: увидел латиницу — слово, аббревиатуру, имя из кода, формулу — поставил скобку. **Слева от скобки всегда латиница: написанное кириллицей скобки не открывает вовсе.** Смотри: Kubernetes (кубернетис) — латиница, скобка; кластер — кириллица, скобки нет; Kubernetes второй раз — голым. Скобка одна на весь термин, каким бы длинным он ни был, и одна за ответ; внутри — русские буквы и произношение целиком, дефис делит слова термина или буквы аббревиатуры, и больше ничего. Формулу читай ровно как написана, лишних букв не приписывай. Есть обычное русское слово — пиши сразу по-русски («экосистема», «на руки»), латиницу ради скобки не вставляй. В блоке кода скобок нет: код не произносят.
     """
 
     /// What kind of question was asked, and how each kind is answered.
