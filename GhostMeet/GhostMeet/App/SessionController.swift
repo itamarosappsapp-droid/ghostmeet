@@ -27,6 +27,21 @@ final class SessionController {
     /// A start is in flight — the system permission dialog may be up.
     private(set) var isStarting = false
 
+    /// Whether quitting the app is allowed right now.
+    ///
+    /// **The app has no other way out.** `LSUIElement` buys the invisibility the
+    /// product is built on — no Dock icon, no menu bar, nothing in ⌘-Tab — and
+    /// takes «закрыть» with it: before the overlay grew a button, quitting meant
+    /// Activity Monitor. A user who cannot close a program that listens to their
+    /// microphone is right to distrust it, whatever the app promises.
+    ///
+    /// Refused while listening on purpose, and the rule lives here rather than in
+    /// the view so it can be stated once and tested: mid-interview the window is
+    /// a hand's width from the chords pressed without looking, and a stray click
+    /// would end the call with no undo. Stopping first is one extra press and
+    /// turns quitting into a decision rather than a slip.
+    var canQuit: Bool { !isListening && !isStarting }
+
     /// What microphone capture is doing, in the capture layer's own words.
     ///
     /// Here for the same reason `themStatus` is: capture publishes it from an

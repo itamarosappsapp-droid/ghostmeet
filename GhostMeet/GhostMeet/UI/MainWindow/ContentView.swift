@@ -86,6 +86,7 @@ struct ContentView: View {
 
                 listenButton
                 settingsButton
+                quitButton
             }
 
             precallStrip
@@ -162,6 +163,31 @@ struct ContentView: View {
         }
         .controlSize(.small)
         .help("Настройки: профиль, ключ провайдера, пороги нарезки реплик.")
+    }
+
+    /// The only way out of the app, and it has to be here.
+    ///
+    /// `LSUIElement` buys the invisibility the product is built on — no Dock
+    /// icon, no menu bar, nothing in ⌘-Tab — and takes «закрыть» with it: until
+    /// this button existed, quitting meant Activity Monitor. A user who cannot
+    /// close a program that listens to their microphone is right to distrust it,
+    /// whatever the app promises about privacy.
+    ///
+    /// Dead while listening — see `SessionController.canQuit` for why the rule
+    /// is what it is. The tooltip says it out loud instead of leaving a grey
+    /// button unexplained.
+    private var quitButton: some View {
+        Button { NSApplication.shared.terminate(nil) } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 11, weight: .medium))
+        }
+        .controlSize(.small)
+        .disabled(!session.canQuit)
+        .help(
+            !session.canQuit
+                ? "Сначала остановите прослушивание — так выход не случится случайным щелчком посреди звонка."
+                : "Выйти из GhostMeet. Значка в Dock у приложения нет, это единственный выход."
+        )
     }
 
     // MARK: - Recognition readiness

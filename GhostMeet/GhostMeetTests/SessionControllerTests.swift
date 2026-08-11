@@ -123,6 +123,35 @@ struct SessionControllerStartTests {
         #expect(controller.failure?.isPermissionDenied == true)
     }
 
+    /// У приложения нет ни значка в Dock, ни строки меню — `LSUIElement`, ради
+    /// невидимости. Пока крестика не было, выйти можно было только через
+    /// «Мониторинг системы»: программу, которая слушает микрофон, пользователь
+    /// не мог закрыть, и это справедливый повод ей не доверять.
+    @Test("Пока не слушаем — выйти можно")
+    func quittingIsAllowedWhileIdle() {
+        let controller = SessionController(engine: SessionEngine(sources: [SilentSource()]))
+
+        #expect(controller.canQuit)
+    }
+
+    /// Посреди звонка окно на расстоянии ладони от аккордов, которые жмут не
+    /// глядя, и случайный щелчок оборвал бы разговор без отмены.
+    @Test("Во время прослушивания выход заперт")
+    func quittingIsRefusedWhileListening() async {
+        let controller = SessionController(
+            engine: SessionEngine(sources: [SilentSource()]),
+            requestMicrophoneAccess: { true }
+        )
+
+        controller.start()
+        await controller.waitForStart()
+        #expect(controller.isListening)
+        #expect(!controller.canQuit)
+
+        controller.stop()
+        #expect(controller.canQuit, "остановили — выход снова открыт")
+    }
+
     @Test("После отказа доступ спрашивается заново, и с разрешением сессия стартует")
     func aRefusalIsNotRememberedBetweenAttempts() async {
         let gate = MicrophoneGate(answer: false)
