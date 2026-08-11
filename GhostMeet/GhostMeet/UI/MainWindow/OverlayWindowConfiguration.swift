@@ -45,7 +45,7 @@ struct OverlayWindowConfiguration {
         level: .screenSaver,
         collectionBehavior: [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle],
         sharingType: .none,
-        styleMask: [.titled, .fullSizeContentView, .resizable, .nonactivatingPanel],
+        styleMask: [.titled, .closable, .fullSizeContentView, .resizable, .nonactivatingPanel],
         defaultContentSize: CGSize(width: 420, height: 520),
         minContentSize: CGSize(width: 320, height: 220),
         screenMargin: 24,
@@ -74,11 +74,17 @@ struct OverlayWindowConfiguration {
         panel.collectionBehavior = collectionBehavior
         panel.sharingType = sharingType
 
-        // Chromeless: no title, no traffic lights, draggable by its background.
+        // Chromeless, но с одним исключением — красной кнопкой закрытия.
+        //
+        // Она стоит там, где ей и место на маке: слева сверху. Своя кнопка в
+        // правом углу шапки эту роль уже играла и была неправа дважды — не
+        // системная и не с той стороны; пользователь заметил это в первую же
+        // минуту. Свернуть и развернуть окно по-прежнему нечем: оверлей прячут
+        // аккордом, а разворачивать в нём нечего.
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         panel.isMovableByWindowBackground = true
-        for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+        for button in [NSWindow.ButtonType.miniaturizeButton, .zoomButton] {
             panel.standardWindowButton(button)?.isHidden = true
         }
 

@@ -188,6 +188,43 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
         stateStore.frame = panel.frame
     }
 
+    /// Красная кнопка закрывает **приложение**, а не окно.
+    ///
+    /// У окна нет второго способа вернуться: значка в Dock нет, строки меню нет,
+    /// ⌘-Tab тоже пуст. Закрытое окно оставило бы работающую программу, которую
+    /// не видно и до которой не добраться иначе как аккордом, — то есть ровно ту
+    /// ловушку, из-за которой кнопка и появилась.
+    ///
+    /// Отказ во время прослушивания живёт не здесь, а в самой кнопке: она гаснет
+    /// вместе с `.closable`, и по красной кнопке, которая ничего не делает,
+    /// щёлкать не приходится. Проверка всё равно повторена — окно закрывают не
+    /// только мышью.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard session.canQuit else { return false }
+        NSApplication.shared.terminate(nil)
+        return false
+    }
+
+    /// Гасит и зажигает красную кнопку вслед за прослушиванием.
+    ///
+    /// Через `styleMask`, а не через `isEnabled`: снятый `.closable` — это то,
+    /// чем macOS сама показывает «это окно сейчас не закрывается», и выглядит
+    /// это привычно, в отличие от кнопки, которая нажимается и не срабатывает.
+    func setCloseEnabled(_ enabled: Bool) {
+        guard let panel else { return }
+        if enabled {
+            panel.styleMask.insert(.closable)
+        } else {
+            panel.styleMask.remove(.closable)
+        }
+        // Снятие `.closable` возвращает скрытые кнопки на место, поэтому прячем
+        // их снова: иначе рядом с красной проступают серые «свернуть» и
+        // «развернуть», которых в оверлее быть не должно.
+        for button in [NSWindow.ButtonType.miniaturizeButton, .zoomButton] {
+            panel.standardWindowButton(button)?.isHidden = true
+        }
+    }
+
     // MARK: - NSWindowDelegate
 
     func windowDidMove(_ notification: Notification) {

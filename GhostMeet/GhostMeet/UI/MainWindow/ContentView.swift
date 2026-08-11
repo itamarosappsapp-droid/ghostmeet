@@ -86,13 +86,21 @@ struct ContentView: View {
 
                 listenButton
                 settingsButton
-                quitButton
             }
 
             precallStrip
         }
-        .padding(.horizontal, 12)
+        // Слева отступ больше: там живёт красная кнопка закрытия, и индикаторы
+        // каналов не должны стоять под ней. Кнопка одна, а не три — свернуть и
+        // развернуть у оверлея скрыты, — поэтому 44, а не привычные для полного
+        // светофора семьдесят.
+        .padding(.leading, 44)
+        .padding(.trailing, 12)
         .padding(.vertical, 8)
+        // Кнопка гаснет и зажигается вслед за прослушиванием. Правило живёт в
+        // `SessionController.canQuit`, окно только показывает его.
+        .onChange(of: session.canQuit) { _, canQuit in controller.setCloseEnabled(canQuit) }
+        .onAppear { controller.setCloseEnabled(session.canQuit) }
     }
 
     /// The readiness strip — see `PrecallStripView` for why it is one line and
@@ -163,31 +171,6 @@ struct ContentView: View {
         }
         .controlSize(.small)
         .help("Настройки: профиль, ключ провайдера, пороги нарезки реплик.")
-    }
-
-    /// The only way out of the app, and it has to be here.
-    ///
-    /// `LSUIElement` buys the invisibility the product is built on — no Dock
-    /// icon, no menu bar, nothing in ⌘-Tab — and takes «закрыть» with it: until
-    /// this button existed, quitting meant Activity Monitor. A user who cannot
-    /// close a program that listens to their microphone is right to distrust it,
-    /// whatever the app promises about privacy.
-    ///
-    /// Dead while listening — see `SessionController.canQuit` for why the rule
-    /// is what it is. The tooltip says it out loud instead of leaving a grey
-    /// button unexplained.
-    private var quitButton: some View {
-        Button { NSApplication.shared.terminate(nil) } label: {
-            Image(systemName: "xmark")
-                .font(.system(size: 11, weight: .medium))
-        }
-        .controlSize(.small)
-        .disabled(!session.canQuit)
-        .help(
-            !session.canQuit
-                ? "Сначала остановите прослушивание — так выход не случится случайным щелчком посреди звонка."
-                : "Выйти из GhostMeet. Значка в Dock у приложения нет, это единственный выход."
-        )
     }
 
     // MARK: - Recognition readiness
