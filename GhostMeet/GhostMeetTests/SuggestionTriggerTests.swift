@@ -94,6 +94,68 @@ struct SuggestionTriggerTests {
     /// Прогон нашёл это первым же действием: интервьюер задал вопрос, нажали
     /// «подробно», интервьюер задал следующий, нажали «коротко» — и ответ пришёл
     /// на предыдущий вопрос.
+    /// Живой прогон: пользователь видел в окне правильный вопрос, нажал — и
+    /// получил ответ на предыдущий. Захват и распознавание были ни при чём.
+    /// Склейка соединяла два вопроса в одну строку `Them:`, а промпт про такую
+    /// строку говорит, что это «один человек и одна мысль», — модель отвечала
+    /// на начало склейки.
+    @Test("Два вопроса подряд не склеиваются в один, если между ними было нажатие")
+    func aPressBreaksTheMerge() async {
+        let provider = StubLLMProvider(.fragments(["ответ"]))
+        let call = SuggestionCall(
+            provider: provider,
+            recognisesInOrder: ["Расскажите про event loop.", "А чем any отличается от unknown?"]
+        )
+        call.listen()
+
+        call.says(.them)
+        call.engine.suggestInDetail()
+        #expect(await call.modelWasAsked(1))
+
+        call.says(.them)
+        call.engine.suggestBriefly()
+        #expect(await call.modelWasAsked(2))
+
+        let lines = provider.requests[1].userPrompt
+            .split(separator: "\n")
+            .filter { $0.hasPrefix("Them: ") }
+        #expect(lines.count == 2, "вопросы склеились в одну строку: \(lines)")
+        #expect(lines.last?.contains("any отличается от unknown") == true)
+    }
+
+    @Test("Текущий вопрос назван отдельной строкой — гадать модели не приходится")
+    func theCurrentQuestionIsNamed() async {
+        let provider = StubLLMProvider(.fragments(["ответ"]))
+        let call = SuggestionCall(
+            provider: provider,
+            recognisesInOrder: ["Расскажите про event loop.", "А чем any отличается от unknown?"]
+        )
+        call.listen()
+
+        call.says(.them)
+        call.engine.suggestBriefly()
+        #expect(await call.modelWasAsked(1))
+        call.says(.them)
+        call.engine.suggestBriefly()
+        #expect(await call.modelWasAsked(2))
+
+        #expect(provider.requests[1].userPrompt.contains("Сейчас он спросил: «А чем any отличается от unknown?»"))
+        #expect(provider.requests[0].userPrompt.contains("Сейчас он спросил: «Расскажите про event loop.»"))
+    }
+
+    @Test("Собеседник ещё не сказал ничего — строки про текущий вопрос нет вовсе")
+    func noQuestionMeansNoLine() async {
+        let provider = StubLLMProvider(.fragments(["ответ"]))
+        let call = SuggestionCall(provider: provider, recognisesAs: "мои слова")
+        call.listen()
+
+        call.says(.you)
+        call.engine.suggestBriefly()
+        #expect(await call.modelWasAsked(1))
+
+        #expect(!provider.requests[0].userPrompt.contains("Сейчас он спросил"))
+    }
+
     @Test("Второе нажатие отвечает на второй вопрос, а не на первый")
     func aSecondPressAnswersTheSecondQuestion() async {
         let provider = StubLLMProvider(.fragments(["ответ"]))

@@ -565,6 +565,14 @@ final class SessionEngine {
     /// were closed for is superseded a moment later. A `Реплика` is the record of
     /// what was said; it does not depend on what became of the suggestion.
     private func closeOpenTurns() {
+        defer {
+            // Всё, что записано к этому моменту, уходит в модель прямо сейчас —
+            // значит, следующая реплика начинает новую мысль, как бы близко она
+            // ни стояла по времени. Метка ставится ПОСЛЕ дозакрытия: границей
+            // должна стать последняя реплика вместе с дозакрытым хвостом
+            // вопроса, а не та, что была до него.
+            if let last = transcript.indices.last { transcript[last].isBeforePress = true }
+        }
         for channel in [Channel.them, .you] {
             guard let captured = segmenters[channel]?.closeIgnoringMinimum() else { continue }
             append(captured)

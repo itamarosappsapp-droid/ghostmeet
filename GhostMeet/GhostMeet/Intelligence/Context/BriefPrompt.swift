@@ -123,11 +123,12 @@ nonisolated enum BriefPrompt {
     ) -> String {
         let window = TranscriptFormatter.format(transcript, limit: transcriptWindow)
         let screenBlock = PromptFragment.screenText(screenText).map { "\n\($0)\n" } ?? ""
+        let question = PromptFragment.currentQuestion(in: transcript).map { "\($0)\n" } ?? ""
         return """
         Разговор:
         \(window.isEmpty ? emptyTranscriptPlaceholder : window)
         \(screenBlock)
-        \(hasStartedAnswering ? Self.askContinuing : Self.askOpening)
+        \(question)\(hasStartedAnswering ? Self.askContinuing : Self.askOpening)
         """
     }
 

@@ -25,6 +25,23 @@ nonisolated enum PromptFragment {
     /// Verbatim from docs/GhostMeet-Prompts.md §1 and §6.
     static let screenTextHeading = "Текст с экрана (OCR):"
 
+    /// Names the question the press is about, when there is one.
+    ///
+    /// **Added because a live run answered the wrong question.** The transcript
+    /// carries the whole call and nothing in it says which line is the current
+    /// question. With a single question that is obvious; with two `Them` lines in
+    /// a row — which is exactly what happens when the user reads a suggestion
+    /// instead of answering aloud — the model has to guess, and it guessed the
+    /// earlier one. The line stands last, right before the ask, because that is
+    /// the strongest position in the message.
+    ///
+    /// Omitted entirely when there is no question yet rather than written empty:
+    /// a bare «Сейчас он спросил:» reads as a question that was asked and not
+    /// heard, which is a different and wrong claim.
+    static func currentQuestion(in transcript: [Turn]) -> String? {
+        TranscriptFormatter.currentQuestion(transcript).map { "Сейчас он спросил: «\($0)»" }
+    }
+
     /// Heading the selected `Профиль` is written under — the `{{resume_context}}`
     /// slot of the prompt document, note 5.
     static let profileHeading = "Контекст о пользователе (резюме / роль / стек):"

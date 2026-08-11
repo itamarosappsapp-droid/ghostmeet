@@ -783,7 +783,10 @@ function composeUser() {
   const q = question();
   const lines = ['Разговор:', 'Them: ' + q.them];
   if (el('withYou').checked) lines.push('You: ' + q.you);
-  return lines.join('\n') + '\n\n' + tailFor();
+  // Текущий вопрос называется отдельной строкой перед просьбой — приложение
+  // делает так же: транскрипт не говорит, какая из строк вопрос, на который
+  // отвечают сейчас.
+  return lines.join('\n') + '\n\nСейчас он спросил: «' + q.them + '»\n' + tailFor();
 }
 
 function applyGenre() {

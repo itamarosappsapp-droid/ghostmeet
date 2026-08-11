@@ -143,7 +143,10 @@ def user_tail(section: str) -> str:
     заголовка не шлёт.
     """
     tpl = blocks_from_doc(section)[1]
-    tpl = re.sub(r"\{\{#if (?:summary|ocr_text|transcript_empty)\}\}.*?\{\{/if\}\}\n?", "", tpl, flags=re.S)
+    # Блок текущего вопроса вырезается вместе с остальными ветками: страница
+    # подставляет его сама, потому что он зависит от выбранного вопроса, а не
+    # от жанра — ровно как в приложении, где его строит `PromptFragment`.
+    tpl = re.sub(r"\{\{#if (?:summary|ocr_text|transcript_empty|current_question)\}\}.*?\{\{/if\}\}\n?", "", tpl, flags=re.S)
     head, _, tail = tpl.partition("{{transcript_all}}")
     if not _:
         raise SystemExit(f"в user-шаблоне «{section}» нет {{{{transcript_all}}}}")

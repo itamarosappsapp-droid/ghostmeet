@@ -93,11 +93,12 @@ nonisolated enum AssistPrompt {
     static func user(transcript: [Turn], screenText: String = "") -> String {
         let window = TranscriptFormatter.format(transcript, limit: transcriptWindow)
         let screenBlock = PromptFragment.screenText(screenText).map { "\n\($0)\n" } ?? ""
+        let question = PromptFragment.currentQuestion(in: transcript).map { "\($0)\n" } ?? ""
         return """
         Разговор:
         \(window.isEmpty ? emptyTranscriptPlaceholder : window)
         \(screenBlock)
-        Сделай то, что нужно мне прямо сейчас: если это разговор — напиши моими словами, что мне сейчас говорить; если на экране задача — реши её.
+        \(question)Сделай то, что нужно мне прямо сейчас: если это разговор — напиши моими словами, что мне сейчас говорить; если на экране задача — реши её.
         """
     }
 

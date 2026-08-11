@@ -133,6 +133,21 @@ nonisolated enum TranscriptFormatter {
             .channel == .you
     }
 
+    /// The question the press is about: the last thing the interlocutor said.
+    ///
+    /// **Named in the prompt because the transcript alone does not say which
+    /// question is current, and a live run proved it.** Two `Them` lines in a row
+    /// with nothing of the user's between them — which is what happens whenever
+    /// they read a suggestion instead of answering aloud — leave the model to
+    /// guess, and it answered the earlier one. With one question the last line is
+    /// obviously the question; with two it is a coin toss the user pays for.
+    ///
+    /// Leaks and turns whose recognition came back empty are skipped: neither is
+    /// something the interlocutor asked.
+    static func currentQuestion(_ turns: [Turn]) -> String? {
+        turns.last { $0.channel == .them && !$0.isLeak && $0.spokenText != nil }?.spokenText
+    }
+
     /// The channel's name as the prompts spell it.
     static func label(for channel: Channel) -> String {
         switch channel {
@@ -155,10 +170,12 @@ nonisolated enum TranscriptFormatter {
         var lines: [String] = []
         var run: (channel: Channel, endedAt: TimeInterval, parts: [String])?
 
+        var closedByPress = false
         for turn in turns {
             let end = turn.timestamp + turn.duration
             if var current = run,
                current.channel == turn.channel,
+               !closedByPress,
                turn.timestamp - current.endedAt <= mergeGap {
                 current.endedAt = max(current.endedAt, end)
                 if let text = turn.spokenText { current.parts.append(text) }
@@ -167,6 +184,9 @@ nonisolated enum TranscriptFormatter {
                 if let finished = run { lines.append(contentsOf: line(of: finished)) }
                 run = (turn.channel, end, turn.spokenText.map { [$0] } ?? [])
             }
+            // Нажатие закрывает серию: следующая реплика того же канала — уже
+            // новая мысль, как бы близко она ни стояла по времени.
+            closedByPress = turn.isBeforePress
         }
         if let finished = run { lines.append(contentsOf: line(of: finished)) }
         return lines
