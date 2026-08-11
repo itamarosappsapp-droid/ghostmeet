@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg:#f6f6f7; --card:#fff; --ink:#17171a; --dim:#6b6b73; --line:#e2e2e6;
+    --accent:#2f6fed; --warm:#c9781a; --ok:#1f8a4c; --bad:#c0392b;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#131316; --card:#1c1c20; --ink:#ececf0; --dim:#9a9aa4; --line:#2c2c33;
+            --accent:#6f9dff; --warm:#e0a05a; --ok:#58c98a; --bad:#ff7b6b; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:0 0 80px;background:var(--bg);color:var(--ink);
+       font:15px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif}
+  .wrap{max-width:960px;margin:0 auto;padding:0 20px}
+  header{padding:26px 0 14px}
+  h1{font-size:22px;margin:0 0 6px;letter-spacing:-.01em}
+  .lede{color:var(--dim);margin:0 0 14px;max-width:64ch}
+  .hint{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        padding:12px 14px;margin:0 0 18px;font-size:13.5px;color:var(--dim)}
+  .hint b{color:var(--ink)}
+  .hint code{font:12.5px/1.4 var(--mono);background:color-mix(in srgb,var(--ink) 8%,transparent);
+             padding:1px 5px;border-radius:4px}
+
+  .controls{position:sticky;top:0;z-index:10;
+            background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(12px);
+            border-bottom:1px solid var(--line);padding:12px 0;margin-bottom:18px}
+  .controls-inner{display:flex;flex-wrap:wrap;gap:12px 16px;align-items:flex-end}
+  .field{display:flex;flex-direction:column;gap:4px}
+  .field label{font-size:11.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
+  select,input[type=range]{accent-color:var(--accent)}
+  select{font:inherit;padding:5px 8px;border-radius:7px;border:1px solid var(--line);
+         background:var(--card);color:var(--ink);max-width:240px}
+  input[type=range]{width:130px}
+  .val{font-variant-numeric:tabular-nums;font-size:12.5px}
+
+  button{font:inherit;font-weight:500;cursor:pointer;border-radius:8px;border:1px solid var(--line);
+         background:var(--card);color:var(--ink);padding:7px 14px}
+  button:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.stop{color:var(--bad)}
+  button:disabled{opacity:.45;cursor:default}
+
+  .stage{background:var(--card);border:1px solid var(--line);border-radius:12px;
+         padding:16px 18px;margin-bottom:10px;min-height:104px}
+  .stage-state{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);margin-bottom:8px}
+  .stage-state.speaking{color:var(--ok)}
+  .stage-state.pausing{color:var(--warm)}
+  .stage-state.waiting{color:var(--accent)}
+  .stage-text{font-size:19px;line-height:1.45;min-height:28px}
+  .stage-meta{margin-top:10px;font-size:12.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+  .bar{height:3px;background:var(--line);border-radius:2px;overflow:hidden;margin-top:10px}
+  .bar > i{display:block;height:100%;width:0;background:var(--warm)}
+
+  .track{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin-bottom:22px}
+  .track > i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
+
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);
+     margin:26px 0 10px;font-weight:600}
+  .item{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        padding:11px 13px;margin-bottom:7px;display:grid;grid-template-columns:auto 1fr;
+        gap:12px;align-items:start}
+  .item.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+  .item.done{opacity:.5}
+  .item.talk{background:transparent;border-style:dashed}
+  .item-body{min-width:0}
+  .item-text{margin:0 0 5px}
+  .gap{display:inline-block;font-variant-numeric:tabular-nums;color:var(--warm);
+       font-size:11.5px;padding:0 5px;font-family:var(--mono)}
+  .gap.long{color:var(--bad);font-weight:600}
+  .tags{font-size:12px;color:var(--dim)}
+  .badge{display:inline-block;border-radius:20px;padding:1px 9px;font-size:11.5px;
+         border:1px solid var(--line);margin-right:6px}
+  .badge.self{color:var(--dim)}
+  .badge.brief{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
+  .badge.detail{color:var(--warm);border-color:color-mix(in srgb,var(--warm) 45%,var(--line))}
+  .badge.context{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,var(--line))}
+  .num{color:var(--dim);font:12px var(--mono);min-width:26px;text-align:right}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:22px}
+  .panel h3{margin:0 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
+  .panel pre{margin:0 0 14px;white-space:pre-wrap;font:13px/1.5 var(--mono)}
+  .panel pre:last-child{margin-bottom:0}
+  .copy{float:right;font-size:12px;padding:3px 10px}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<header>
+  <h1>__TITLE__</h1>
+  <p class="lede">
+    Одно интервью на позицию <b>__ROLE__</b> — от «здравствуйте» до «мы вернёмся с ответом».
+    Страница ведёт его последовательно: задаёт вопрос голосом и <b>ждёт</b>, пока вы ответите. На что-то отвечайте сами,
+    на что-то жмите аккорд GhostMeet — так и проверяется, ради чего всё делалось.
+  </p>
+
+  <div class="hint">
+    <b>Перед началом.</b> Выберите этот браузер источником канала <code>Them</code> в настройках GhostMeet и включите
+    прослушивание. <b>Первый прогон делайте без наушников</b> — это худший случай, и проверять надо его.<br><br>
+    <b>Как идти.</b> «Начать интервью» — дальше страница играет вступление и первый вопрос, потом ждёт. Отвечаете вслух
+    сами или жмёте <code>⌥⌘A</code> / <code>⌥⌘Z</code> и читаете подсказку. Ответили — «Дальше».
+    Метка у вопроса — <b>подсказка, а не правило</b>: где я ожидаю, что вы ответите сами, где стоит попросить коротко,
+    а где — развёрнуто.<br><br>
+    <b>Метка «заготовка»</b> — вопрос, ответ на который должен прийти из «Контекста собеседования» в настройках.
+    Если приходит выдуманная вилка или чужая история — это дефект, запишите дословно.<br><br>
+    <b>Паузы здесь не длиннее секунды</b> — короче порога, по которому GhostMeet закрывает реплику (1.5 с),
+    так что вопрос доезжает одной записью. Хотите проверить обратный случай — поднимите ползунок «Паузы»
+    до 2×, и разрывы станут длиннее порога; помеченные красным как раз такие.<br><br>
+    <b>Вкладку не прячьте</b> — в невидимой вкладке браузер загрубляет таймеры до секунды, и паузы поедут.
+    Если синтез звучит мимо браузера, переключите канал <code>Them</code> на Core Audio Process Tap.
+  </div>
+</header>
+</div>
+
+<div class="controls">
+  <div class="wrap controls-inner">
+    <div class="field">
+      <label for="voice1">Голос интервьюера</label>
+      <select id="voice1"></select>
+    </div>
+    <div class="field">
+      <label for="voice2">Голос второго</label>
+      <select id="voice2"></select>
+    </div>
+    <div class="field">
+      <label for="rate">Темп <span class="val" id="rateVal">1.00</span></label>
+      <input type="range" id="rate" min="0.6" max="1.4" step="0.05" value="1">
+    </div>
+    <div class="field">
+      <label for="gap">Паузы <span class="val" id="gapVal">1.0×</span></label>
+      <input type="range" id="gap" min="0.3" max="2.5" step="0.1" value="1">
+    </div>
+    <div class="field">
+      <label for="lively">Живость</label>
+      <select id="lively">
+        <option value="on" selected>с запинками</option>
+        <option value="off">ровно</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>&nbsp;</label>
+      <button id="start" class="primary">Начать интервью</button>
+    </div>
+    <div class="field">
+      <label>&nbsp;</label>
+      <button id="next" disabled>Дальше →</button>
+    </div>
+    <div class="field">
+      <label>&nbsp;</label>
+      <button id="again" disabled>Повторить вопрос</button>
+    </div>
+    <div class="field">
+      <label>&nbsp;</label>
+      <button id="stop" class="stop" disabled>Стоп</button>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="stage">
+    <div class="stage-state" id="state">готов</div>
+    <div class="stage-text" id="now">—</div>
+    <div class="bar"><i id="progress"></i></div>
+    <div class="stage-meta" id="meta">Нажмите «Начать интервью».</div>
+  </div>
+  <div class="track"><i id="track"></i></div>
+
+  <h2>Что вписать в настройки перед прогоном</h2>
+  <div class="panel" id="setup"></div>
+
+  <div id="list"></div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Сценарий одного интервью, по порядку.
+//
+// `kind: 'talk'` — реплика интервьюера без вопроса: приветствие, «угу, понятно»,
+// переход к новой теме. Она проигрывается и сразу тянет за собой следующую
+// строку, останавливаться на ней незачем. Нужны они не для красоты: короткая
+// реакция между ответом кандидата и следующим вопросом — это второй голос в
+// канале `Them` вплотную к его собственной речи, ровно тот случай, на котором
+// проверяется склейка реплик и защита от протечки динамиков.
+//
+// `kind: 'q'` — вопрос: страница договаривает и ЖДЁТ. Дальше решает человек.
+//
+// `hint` — чего я жду от этого вопроса на прогоне, не приказ:
+//   self    — отвечайте сами, приложение не трогайте;
+//   brief   — ⌥⌘A, короткая подсказка;
+//   detail  — ⌥⌘Z, развёрнутая;
+//   context — ответ обязан прийти из «Контекста собеседования».
+//
+// Паузы: 0.6–1.5 с — запинка внутри фразы, реплика остаётся целой; 1.6–1.9 с —
+// выше порога, вопрос приезжает двумя записями. В вопросах с `tail: true`
+// последний кусок нарочно короткий — это тот хвост, который терялся при
+// дозакрытии реплики по нажатию.
+// ---------------------------------------------------------------------------
+const SCRIPT = __SCRIPT__;
+const SETUP = __SETUP__;
+
+const HINTS = {
+  self: ['self', 'отвечайте сами'],
+  brief: ['brief', '⌥⌘A — коротко'],
+  detail: ['detail', '⌥⌘Z — подробно'],
+  context: ['context', 'заготовка'],
+};
+
+const FILLERS = ['ммм,', 'так,', 'ну,', 'вот,', 'эээ,'];
+
+const synth = window.speechSynthesis;
+const el = (id) => document.getElementById(id);
+const stage = { state: el('state'), now: el('now'), meta: el('meta'), bar: el('progress') };
+
+let voices = [], run = 0, cursor = -1, startedAt = null, waiting = false;
+
+const questionCount = SCRIPT.filter((s) => s.kind === 'q').length;
+const questionNumber = (i) => SCRIPT.slice(0, i + 1).filter((s) => s.kind === 'q').length;
+
+// --- Список ----------------------------------------------------------------
+
+function render() {
+  let html = '', phase = null;
+  SCRIPT.forEach((s, i) => {
+    if (s.phase !== phase) { phase = s.phase; html += `<h2>${phase}</h2>`; }
+    const body = s.chunks.map(([text, gap]) => {
+      const mark = gap ? `<span class="gap ${gap > 1500 ? 'long' : ''}">▮${(gap / 1000).toFixed(1)}с</span>` : '';
+      return `<span>${text}</span>${mark}`;
+    }).join(' ');
+    const cuts = s.chunks.filter((c) => c[1] > 1500).length;
+    const hint = s.hint ? HINTS[s.hint] : null;
+    html += `
+      <div class="item ${s.kind === 'talk' ? 'talk' : ''}" id="s${i}">
+        <div class="num">${s.kind === 'q' ? questionNumber(i) : '·'}</div>
+        <div class="item-body">
+          <p class="item-text">${body}</p>
+          <div class="tags">
+            ${hint ? `<span class="badge ${hint[0]}">${hint[1]}</span>` : '<span class="badge">реплика интервьюера</span>'}
+            ${cuts ? `<b>${cuts}</b> паузы длиннее порога · ` : ''}${s.chunks.length} кусков${s.tail ? ' · короткий хвост' : ''}
+          </div>
+        </div>
+      </div>`;
+  });
+  el('list').innerHTML = html;
+  SCRIPT.forEach((_, i) => el(`s${i}`).addEventListener('click', () => jump(i)));
+}
+
+// --- Голоса ----------------------------------------------------------------
+
+/**
+ * Все голоса системы, русские сверху отдельной группой.
+ *
+ * Раньше список фильтровался до русских и на чистой системе оказывался длиной
+ * в один голос. Теперь видно всё: русских в macOS из коробки мало, зато
+ * доустановленные (включая «улучшенные» и Siri) появляются здесь сразу.
+ */
+function loadVoices() {
+  const all = synth.getVoices();
+  if (!all.length) return;
+  const ru = all.filter((v) => v.lang && v.lang.toLowerCase().startsWith('ru'));
+  const rest = all.filter((v) => !ru.includes(v));
+  voices = [...ru, ...rest];
+
+  const options = (chosen) => {
+    const item = (v) => {
+      const i = voices.indexOf(v);
+      return `<option value="${i}"${i === chosen ? ' selected' : ''}>${v.name} — ${v.lang}</option>`;
+    };
+    return (ru.length ? `<optgroup label="Русские">${ru.map(item).join('')}</optgroup>` : '')
+      + (rest.length ? `<optgroup label="Остальные">${rest.map(item).join('')}</optgroup>` : '');
+  };
+
+  // Второй интервьюер по умолчанию — следующий русский голос, если он есть:
+  // два одинаковых голоса не дают того, ради чего второй заведён.
+  el('voice1').innerHTML = options(0);
+  el('voice2').innerHTML = options(ru.length > 1 ? 1 : 0);
+
+  stage.meta.textContent = ru.length > 1
+    ? `Голосов в системе: ${all.length}, русских ${ru.length}.`
+    : 'Русский голос в системе один. Больше — в «Системных настройках» → «Универсальный доступ» → «Устная речь» → «Системный голос» → «Настроить»: там же живут улучшенные варианты Милены и Юрия.';
+}
+loadVoices();
+synth.addEventListener('voiceschanged', loadVoices);
+
+// --- Речь ------------------------------------------------------------------
+
+function speak(text, rate, who) {
+  return new Promise((resolve) => {
+    const u = new SpeechSynthesisUtterance(text);
+    const v = voices[Number(el(who === 2 ? 'voice2' : 'voice1').value)];
+    if (v) { u.voice = v; u.lang = v.lang; }
+    u.rate = rate;
+    // Небольшой разброс высоты — иначе полсотни вопросов звучат одним тоном.
+    //
+    // А когда на обоих интервьюеров выбран ОДИН голос — а так и будет, русский
+    // голос в macOS из коробки один, — второго разводит тембр: без этого «нас
+    // сегодня двое» слышится как один человек, и второй голос в канале `Them`,
+    // ради которого он тут и заведён, не проверяется вовсе.
+    const sameVoice = el('voice1').value === el('voice2').value;
+    const shift = (who === 2 && sameVoice) ? -0.22 : 0;
+    u.pitch = 1 + shift + (Math.random() - 0.5) * 0.18;
+    u.onend = resolve;
+    u.onerror = resolve;
+    synth.speak(u);
+  });
+}
+
+/**
+ * Пауза держится ОДНИМ таймером, а не цепочкой коротких: в невидимой вкладке
+ * браузер загрубляет таймеры до секунды, и цепочка растянула бы паузу в 0.3 с
+ * до секунды — то есть перегнала бы её через порог, вокруг которого всё это и
+ * построено. Полосу двигает requestAnimationFrame: загрубят её — соврёт
+ * анимация, а не сама пауза.
+ */
+function pause(ms, token) {
+  stage.state.textContent = `пауза ${(ms / 1000).toFixed(1)} с`;
+  stage.state.className = 'stage-state pausing';
+  const began = performance.now();
+  let frame = requestAnimationFrame(function tick() {
+    if (run !== token) return;
+    const done = Math.min(1, (performance.now() - began) / ms);
+    stage.bar.style.width = `${done * 100}%`;
+    if (done < 1) frame = requestAnimationFrame(tick);
+  });
+  return new Promise((resolve) => setTimeout(() => {
+    cancelAnimationFrame(frame);
+    stage.bar.style.width = '0%';
+    resolve();
+  }, ms));
+}
+
+// --- Ход интервью ----------------------------------------------------------
+
+function elapsed() {
+  if (!startedAt) return '';
+  const s = Math.round((performance.now() - startedAt) / 1000);
+  return ` · ${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+}
+
+async function play(index, token) {
+  const s = SCRIPT[index];
+  const lively = el('lively').value === 'on';
+  const baseRate = Number(el('rate').value);
+  const gapScale = Number(el('gap').value);
+
+  document.querySelectorAll('.item.active').forEach((n) => n.classList.remove('active'));
+  const card = el(`s${index}`);
+  card.classList.add('active');
+  SCRIPT.slice(0, index).forEach((_, i) => el(`s${i}`).classList.add('done'));
+  card.classList.remove('done');
+  card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+
+  const number = s.kind === 'q' ? `вопрос ${questionNumber(index)} из ${questionCount}` : 'реплика';
+  el('track').style.width = `${(questionNumber(index) / questionCount) * 100}%`;
+
+  for (let i = 0; i < s.chunks.length; i++) {
+    if (run !== token) return false;
+    let [text, gap] = s.chunks[i];
+    // Запинка приклеивается к началу куска, а не звучит отдельно: отдельной она
+    // была бы обрывком в транскрипте.
+    if (lively && i > 0 && Math.random() < 0.35) {
+      text = `${FILLERS[Math.floor(Math.random() * FILLERS.length)]} ${text}`;
+    }
+    const rate = lively ? baseRate * (1 + (Math.random() - 0.5) * 0.16) : baseRate;
+    stage.state.textContent = `говорит · кусок ${i + 1} из ${s.chunks.length}`;
+    stage.state.className = 'stage-state speaking';
+    stage.now.textContent = text;
+    stage.meta.textContent = `${s.phase} · ${number}${elapsed()}`;
+    await speak(text, rate, s.who);
+    if (run !== token) return false;
+    if (gap) await pause(gap * gapScale, token);
+  }
+  return true;
+}
+
+/** Играет со строки `index` подряд, пока не упрётся в вопрос — и там ждёт. */
+async function advanceFrom(index) {
+  const token = ++run;
+  startedAt ??= performance.now();
+  el('stop').disabled = false;
+  waiting = false;
+
+  for (let i = index; i < SCRIPT.length; i++) {
+    cursor = i;
+    if (!await play(i, token)) return;
+    if (SCRIPT[i].kind === 'q') {
+      waiting = true;
+      const hint = SCRIPT[i].hint ? HINTS[SCRIPT[i].hint][1] : '';
+      stage.state.textContent = `ваш ход${hint ? ' — ' + hint : ''}`;
+      stage.state.className = 'stage-state waiting';
+      stage.meta.textContent = `${SCRIPT[i].phase} · вопрос ${questionNumber(i)} из ${questionCount}${elapsed()} · отвечайте и жмите «Дальше»`;
+      el('next').disabled = false;
+      el('again').disabled = false;
+      el('stop').disabled = true;
+      return;
+    }
+  }
+
+  stage.state.textContent = 'интервью закончено';
+  stage.state.className = 'stage-state';
+  stage.meta.textContent = `Прошло${elapsed()}. Спасибо — теперь запишите, что не сошлось.`;
+  el('next').disabled = true;
+  el('again').disabled = true;
+  el('stop').disabled = true;
+}
+
+function jump(index) {
+  stopAll();
+  advanceFrom(index);
+}
+
+function stopAll() {
+  run++;
+  synth.cancel();
+  waiting = false;
+  stage.bar.style.width = '0%';
+  stage.state.textContent = 'пауза';
+  stage.state.className = 'stage-state';
+  el('stop').disabled = true;
+  el('next').disabled = cursor < 0;
+  el('again').disabled = cursor < 0;
+}
+
+// --- Проводка --------------------------------------------------------------
+
+el('start').addEventListener('click', () => {
+  stopAll();
+  document.querySelectorAll('.item.done').forEach((n) => n.classList.remove('done'));
+  startedAt = null;
+  cursor = -1;
+  el('start').textContent = 'Начать заново';
+  advanceFrom(0);
+});
+el('next').addEventListener('click', () => {
+  if (cursor + 1 < SCRIPT.length) advanceFrom(cursor + 1);
+});
+el('again').addEventListener('click', () => { if (cursor >= 0) advanceFrom(cursor); });
+el('stop').addEventListener('click', () => { stopAll(); stage.now.textContent = '—'; });
+el('rate').addEventListener('input', (e) => el('rateVal').textContent = Number(e.target.value).toFixed(2));
+el('gap').addEventListener('input', (e) => el('gapVal').textContent = `${Number(e.target.value).toFixed(1)}×`);
+window.addEventListener('beforeunload', () => synth.cancel());
+
+// Пробел — «Дальше»: во время интервью руки на клавиатуре, а не на мыши.
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && waiting && e.target === document.body) {
+    e.preventDefault();
+    el('next').click();
+  }
+});
+
+/**
+ * Профиль и заготовки этого пака — их вписывают в настройки приложения.
+ *
+ * Часть стенда, а не украшение: половина вопросов интервью проверяет именно
+ * заготовки, и без них ответ придёт выдуманный. Кнопка копирует поле целиком,
+ * чтобы не переписывать руками.
+ */
+function renderSetup() {
+  const block = (title, text) => `
+    <h3>${title}<button class="copy" data-copy="${encodeURIComponent(text)}">Скопировать</button></h3>
+    <pre>${text.replace(/</g, '&lt;')}</pre>`;
+  el('setup').innerHTML =
+    block('Профиль', `Роль: ${SETUP.profile.role}\nОпыт: ${SETUP.profile.experience}\nСтек: ${SETUP.profile.stack}`)
+    + block('Истории из практики', SETUP.context.stories)
+    + block('Почему эта компания', SETUP.context.motivation)
+    + block('Ожидания по деньгам', SETUP.context.compensation)
+    + block('Вопросы к работодателю', SETUP.context.questions);
+
+  el('setup').querySelectorAll('[data-copy]').forEach((b) => {
+    b.addEventListener('click', () => {
+      navigator.clipboard.writeText(decodeURIComponent(b.dataset.copy));
+      b.textContent = 'скопировано';
+      setTimeout(() => b.textContent = 'Скопировать', 1500);
+    });
+  });
+}
+
+render();
+renderSetup();
+</script>
+</body>
+</html>
