@@ -6,7 +6,7 @@
 
 **Blocked by:** 05 — Канал `Them` через Process Tap; 06 — Настройки и Keychain.
 
-**Status:** ready-for-human
+**Status:** done
 
 - [x] Закрытие реплики `Them` автоматически запускает запрос режимом `Assist`
 - [x] Закрытие реплики `You` запрос не запускает

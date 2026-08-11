@@ -6,7 +6,7 @@
 
 **Blocked by:** None — контракт (`LLMProvider`, `ProviderCatalog`, `ProviderFactory`) уже в дереве.
 
-**Status:** ready-for-human
+**Status:** done
 
 - [x] Один тип реализует `LLMProvider` для всего OpenAI-совместимого семейства
 - [x] Стриминг фрагментов и настоящая отмена — при отмене задачи соединение рвётся, а не досчитывается в фоне

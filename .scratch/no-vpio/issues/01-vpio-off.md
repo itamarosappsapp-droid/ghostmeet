@@ -6,7 +6,7 @@
 
 **Blocked by:** None.
 
-**Status:** ready-for-human
+**Status:** done
 
 - [x] VPIO не включается ни при каких настройках и ни при каком бэкенде канала `Them`
 - [x] `SettingsStore.allowsVoiceProcessing` удалён, а не переведён в `false`: точка расширения себя исчерпала
