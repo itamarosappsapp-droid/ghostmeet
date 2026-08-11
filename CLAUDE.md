@@ -174,13 +174,13 @@ The reason is in the scenario, not in the code: a candidate knows most of the an
 
 Cancellation is narrower than it looks, and the boundary is load-bearing: a superseded request loses its *answer* — the stream, the screenshot being taken for it — and keeps its *words*. Speech recognition is never cancelled; those words belong in the transcript regardless of which answer survives. Only a new press supersedes anything. A `Them` turn no longer cancels anything at all, and `You` speech never did.
 
-Two genres share that path and differ only in size: **коротко** (⌥⌘A, ~512 tokens) is the default, because a user who presses is already speaking and needs the missing piece rather than an essay; **подробно** (⌥⌘E, 4k) is for a topic that is unfamiliar whole. `Solve on screen` is the third chord and reads no transcript at all.
+Two genres share that path and differ only in size: **коротко** (⌥⌘A, ~512 tokens) is the default, because a user who presses is already speaking and needs the missing piece rather than an essay; **подробно** (⌥⌘Z, 4k) is for a topic that is unfamiliar whole. `Solve on screen` is the third chord and reads no transcript at all.
 
 The planned Swift file layout (`App/`, `UI/`, `Audio/`, `Speech/`, `Intelligence/{Context,LLM,Screen}/`, `Input/`, `Settings/`, `Utilities/`) is in [docs/GhostMeet.md](docs/GhostMeet.md) — follow it when creating files rather than inventing a new structure.
 
 ## Modes and prompts
 
-Modes that exist: the two genres of suggestion (**коротко** ⌥⌘A and **подробно** ⌥⌘E), `Ask`, `Solve on screen`. Spec'd but unbuilt: Follow-up, Recap, and the background Summarizer. **The authoritative prompt texts live in [docs/GhostMeet-Prompts.md](docs/GhostMeet-Prompts.md); read it before touching prompt-building code, and update it in the same change if a prompt shifts** — the two must match word for word, and a test compares the assembled string against the literal from that document.
+Modes that exist: the two genres of suggestion (**коротко** ⌥⌘A and **подробно** ⌥⌘Z), `Ask`, `Solve on screen`. Spec'd but unbuilt: Follow-up, Recap, and the background Summarizer. **The authoritative prompt texts live in [docs/GhostMeet-Prompts.md](docs/GhostMeet-Prompts.md); read it before touching prompt-building code, and update it in the same change if a prompt shifts** — the two must match word for word, and a test compares the assembled string against the literal from that document.
 
 Text shared by both genres lives in `PromptFragment` and is substituted into each — `voice` (the register frame plus a «не так / а так» pair), `outOfStack`, `pronunciation`, `questionKinds`, `channels`: two literals that must stay identical would drift on the first edit.
 

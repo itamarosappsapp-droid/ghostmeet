@@ -200,6 +200,73 @@ struct HotkeyValueTests {
         )
     }
 
+    /// Три аккорда, которые жмут во время звонка, — один куст под одной рукой:
+    /// `A`, `Z` и `X` стоят друг под другом в левом нижнем углу, так что большой
+    /// палец держит ⌥⌘, а остальные достают до всех трёх, не двигая кисть.
+    /// ⌥⌘E требовал второй руки — это и была жалоба.
+    @Test("Аккорды звонка лежат одним кустом под левой рукой")
+    func theCallChordsAreOneCluster() {
+        #expect(HotkeyAction.suggestBriefly.defaultHotkey == Hotkey(kVK_ANSI_A, [.command, .option]))
+        #expect(HotkeyAction.suggestInDetail.defaultHotkey == Hotkey(kVK_ANSI_Z, [.command, .option]))
+        #expect(HotkeyAction.solveOnScreen.defaultHotkey == Hotkey(kVK_ANSI_X, [.command, .option]))
+
+        // Соседи заняты системой и редакторами, и глобальный аккорд отнял бы их
+        // у всей машины: ⌥⌘D прячет Dock, ⌥⌘S — «Save All» в VS Code,
+        // ⌥⌘W закрывает окна, ⌥⌘V — «Переместить» в Finder.
+        let forbidden = [kVK_ANSI_D, kVK_ANSI_S, kVK_ANSI_W, kVK_ANSI_V]
+        for action in HotkeyAction.allCases {
+            #expect(
+                !(forbidden.contains(Int(action.defaultHotkey.keyCode)) && action.defaultHotkey.modifiers == [.command, .option]),
+                "\(action.rawValue) занял чужой системный аккорд"
+            )
+        }
+    }
+
+    @Test("Старый аккорд, которого никто не менял, переезжает на новый")
+    func anUntouchedChordMovesOn() throws {
+        var stored = HotkeyBindings.default
+        stored[.suggestInDetail] = Hotkey(kVK_ANSI_E, [.command, .option])
+        stored[.solveOnScreen] = Hotkey(kVK_ANSI_G, [.command, .option])
+
+        let revived = try JSONDecoder().decode(
+            HotkeyBindings.self,
+            from: try JSONEncoder().encode(stored)
+        )
+
+        #expect(revived[.suggestInDetail] == Hotkey(kVK_ANSI_Z, [.command, .option]))
+        #expect(revived[.solveOnScreen] == Hotkey(kVK_ANSI_X, [.command, .option]))
+    }
+
+    /// Граница между решением и наследством: аккорд, равный снятому умолчанию,
+    /// никто не выбирал. Всё остальное — выбор пользователя, и трогать его нельзя.
+    @Test("Аккорд, выбранный пользователем, миграция не трогает")
+    func aChosenChordSurvives() throws {
+        var stored = HotkeyBindings.default
+        stored[.suggestInDetail] = Hotkey(kVK_ANSI_J, [.command, .option])
+
+        let revived = try JSONDecoder().decode(
+            HotkeyBindings.self,
+            from: try JSONEncoder().encode(stored)
+        )
+
+        #expect(revived[.suggestInDetail] == Hotkey(kVK_ANSI_J, [.command, .option]))
+    }
+
+    @Test("Новый аккорд уже занят — миграция не отбирает его, а оставляет старый")
+    func aTakenChordIsNotStolen() throws {
+        var stored = HotkeyBindings.default
+        stored[.suggestInDetail] = Hotkey(kVK_ANSI_E, [.command, .option])
+        stored[.clearContext] = Hotkey(kVK_ANSI_Z, [.command, .option])
+
+        let revived = try JSONDecoder().decode(
+            HotkeyBindings.self,
+            from: try JSONEncoder().encode(stored)
+        )
+
+        #expect(revived[.clearContext] == Hotkey(kVK_ANSI_Z, [.command, .option]))
+        #expect(revived[.suggestInDetail] == Hotkey(kVK_ANSI_E, [.command, .option]))
+    }
+
     @Test("Комбинация переживает кодирование и раскодирование")
     func aChordSurvivesEncoding() throws {
         let bindings = HotkeyBindings.default

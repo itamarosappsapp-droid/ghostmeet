@@ -87,22 +87,49 @@ nonisolated enum HotkeyAction: String, CaseIterable, Codable, Sendable, Identifi
     /// The panic key is the exception to the ⌘⌥ pattern: it has to be reachable
     /// in one motion, on camera, without looking down.
     ///
-    /// The two genres get ⌥⌘A and ⌥⌘E, and the letters are chosen for the hand
-    /// rather than for a mnemonic: both are on the left half of the keyboard, so
-    /// the chord is taken by one hand without leaving the other one — the one
-    /// that is typing code — and without looking. ⌥⌘D would have been closer
-    /// still and is the system's own "hide the Dock"; ⌥⌘S is "Save All" in VS
-    /// Code; ⌥⌘W closes every window. F13–F15 are the safest chords of all and
-    /// are also absent from every laptop keyboard, which is what this app runs on.
+    /// **The three chords pressed during a call are one cluster under one hand,
+    /// and that is the whole rule.** `A`, `Z` and `X` sit on top of each other in
+    /// the bottom-left corner, so the thumb takes ⌥⌘ and the remaining fingers
+    /// reach all three without the hand moving and without looking down — while
+    /// the other hand keeps typing, which is the situation these are pressed in.
+    ///
+    /// It replaced ⌥⌘E and ⌥⌘G, and the complaint was the plain one: `E` is two
+    /// rows up from the modifiers and needs the second hand. Letters here are
+    /// chosen for the hand and never for a mnemonic; the mnemonic is what the
+    /// settings screen is for.
+    ///
+    /// What the cluster cannot use, and why — the neighbours are all taken:
+    /// ⌥⌘D is the system's own "hide the Dock", ⌥⌘S is "Save All" in VS Code,
+    /// ⌥⌘W closes every window, ⌥⌘V is "Move item here" in Finder, ⌥⌘Q sits one
+    /// slip away from logging out. A global hotkey outranks the focused app, so
+    /// taking one of those would take it away from every application on the
+    /// machine. F13–F15 are the safest chords of all and are also absent from
+    /// every laptop keyboard, which is what this app runs on.
+    ///
+    /// The panic key is the exception to the ⌥⌘ pattern: it has to be reachable
+    /// in one motion, on camera, without looking down.
     var defaultHotkey: Hotkey {
         switch self {
         case .toggleVisibility: Hotkey(kVK_ANSI_Backslash, [.command])
         case .startListening: Hotkey(kVK_ANSI_L, [.command, .option])
         case .stopListening: Hotkey(kVK_ANSI_Period, [.command, .option])
         case .suggestBriefly: Hotkey(kVK_ANSI_A, [.command, .option])
+        case .suggestInDetail: Hotkey(kVK_ANSI_Z, [.command, .option])
+        case .solveOnScreen: Hotkey(kVK_ANSI_X, [.command, .option])
+        case .clearContext: Hotkey(kVK_ANSI_K, [.command, .option])
+        }
+    }
+
+    /// The chord this action used to ship with, when a later version moved it.
+    ///
+    /// Kept so that a set written by the older build can be brought forward
+    /// without touching anything the user chose: a binding that still equals the
+    /// retired default was never a decision, it was what happened to ship.
+    var retiredDefaultHotkey: Hotkey? {
+        switch self {
         case .suggestInDetail: Hotkey(kVK_ANSI_E, [.command, .option])
         case .solveOnScreen: Hotkey(kVK_ANSI_G, [.command, .option])
-        case .clearContext: Hotkey(kVK_ANSI_K, [.command, .option])
+        default: nil
         }
     }
 
@@ -124,6 +151,8 @@ nonisolated enum HotkeyAction: String, CaseIterable, Codable, Sendable, Identifi
         Hotkey(kVK_ANSI_Backslash, [.command]),
         Hotkey(kVK_ANSI_Backslash, [.command, .option]),
         Hotkey(kVK_ANSI_A, [.command, .option]),
+        Hotkey(kVK_ANSI_Z, [.command, .option]),
+        Hotkey(kVK_ANSI_X, [.command, .option]),
         Hotkey(kVK_ANSI_E, [.command, .option]),
         Hotkey(kVK_ANSI_L, [.command, .option]),
         Hotkey(kVK_ANSI_Period, [.command, .option]),
@@ -254,6 +283,7 @@ nonisolated struct HotkeyBindings: Codable, Equatable, Sendable {
         cleared = try container.decodeIfPresent(Set<String>.self, forKey: .cleared)
             ?? Self.actionsOfTheProactiveBuild.subtracting(storage.keys)
         adoptDefaultsForUnknownActions()
+        moveOnFromRetiredDefaults()
     }
 
     /// The actions that existed while a chord was the secondary path (ADR-0003):
@@ -273,6 +303,27 @@ nonisolated struct HotkeyBindings: Codable, Equatable, Sendable {
             guard storage[unknown.rawValue] == nil, !cleared.contains(unknown.rawValue) else { continue }
             guard action(boundTo: unknown.defaultHotkey) == nil else { continue }
             storage[unknown.rawValue] = unknown.defaultHotkey
+        }
+    }
+
+    /// Brings a binding that is still the **old** shipped chord forward to the
+    /// new one.
+    ///
+    /// The line between a decision and an inheritance is exactly this: a chord
+    /// equal to the retired default was never chosen, it was what the build of
+    /// the day happened to give. Anything else — including the new default's
+    /// chord assigned to some other action — is the user's and is left alone.
+    ///
+    /// Nothing is stolen here either. If the new chord is already taken, the
+    /// action keeps the old one: an uncomfortable chord that works beats a
+    /// comfortable one that silently disabled something else.
+    private mutating func moveOnFromRetiredDefaults() {
+        for action in HotkeyAction.allCases {
+            guard let retired = action.retiredDefaultHotkey,
+                  storage[action.rawValue] == retired,
+                  self.action(boundTo: action.defaultHotkey) == nil
+            else { continue }
+            storage[action.rawValue] = action.defaultHotkey
         }
     }
 }
