@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-The MVP pipeline runs end to end: both channels are captured, turns are cut on pauses, speech is recognised locally into a live transcript — and a suggestion is generated when the user presses a chord, never on its own. **650 tests** across 87 suites (Swift Testing, target `GhostMeetTests`).
+**The MVP is closed: it was walked end to end on a live run (11 August 2026)** — the window stayed out of a screen recording, a headset swapped mid-call was survived, both genres and `Solve on screen` answered, the answers came from the user's заготовки, and a full mock interview on claude-haiku produced no cut streams. The MVP pipeline runs end to end: both channels are captured, turns are cut on pauses, speech is recognised locally into a live transcript — and a suggestion is generated when the user presses a chord, never on its own. **654 tests** across 87 suites (Swift Testing, target `GhostMeetTests`).
 
 Done: project skeleton and test target, microphone capture, turn segmentation, WhisperKit recognition with model selection, the overlay window, the `Them` channel (both backends, SCK by default), settings with per-provider keys, the full provider router (OpenAI-compatible family, Gemini, CLI tools) with streaming, screenshot and OCR on every request, the press-driven suggestion lifecycle (a new press supersedes the answer in flight), two genres of suggestion plus `Ask` and `Solve on screen`, global hotkeys and per-channel indicators, several named profiles with one selected per call and filled in either by hand or from a resume, the `Контекст собеседования` beside them, the readiness strip in the overlay header, and markup in the suggestion card.
 
@@ -100,6 +100,8 @@ The app is signed with a **stable Apple Development identity** (personal team). 
 Что проверять каждый раз:
 
 - `docs/GhostMeet.md` — спека продукта: возможности, стек, структура файлов, списки MVP/v1. **Структура файлов в ней — инструкция для агентов**, и если она врёт, следующий агент создаст файлы с несуществующими именами.
+
+  **Списки MVP/v1 — часть документа, а не украшение, и галочки в них ставятся той же правкой.** Проверено на себе: тринадцать сделанных пунктов простояли неотмеченными до конца MVP, а строка «автоматический запуск подсказки по паузе» осталась в списке недоделанного через полгода после того, как ADR-0008 её отменил. Отменённое не откладывается в тот же список — оно вычёркивается со ссылкой на решение, иначе читатель считает его невыполненной работой.
 - `docs/GhostMeet-Prompts.md` — авторитетные тексты промптов. Промпт в коде и промпт здесь обязаны совпадать дословно; правятся одним изменением.
 - `CONTEXT.md` — глоссарий. Новое понятие в коде без термина в глоссарии — источник будущего расползания синонимов.
 - `CLAUDE.md` — этот файл: состояние проекта, грабли, инварианты.
