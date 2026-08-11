@@ -73,6 +73,14 @@ plutil -p ~/Library/Developer/Xcode/DerivedData/GhostMeet-*/Build/Products/Debug
 - **Give every concurrent build its own `-derivedDataPath`.** Parallel agents sharing the default DerivedData corrupt each other's builds.
 - `SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY` is on, so `CGRect` / `CGSize` need an explicit `import CoreGraphics` even where `Foundation` is already imported. A standalone `swiftc -typecheck` without the flag will not reproduce the error.
 
+### «0 tests passed» — это падение, а не успех
+
+`xcodebuild test` печатает `✔ Test run with 0 tests in N suites passed` и возвращает **65**, когда host-приложение умирает раньше первого теста. Сюиты при этом объявляются и «проходят» — их ноль тестов действительно не упал. Строка выглядит как успех, и один раз уже была за него принята.
+
+Причина в тот раз: `NSHostingView.safeAreaRegions = []` — AppKit бросает исключение прямо в цикле отрисовки, приложение падает на старте. Правильный способ добраться до той же цели — `.ignoresSafeArea()` в самом SwiftUI-представлении.
+
+Правило простое: **смотреть на число тестов и на код возврата, а не на галочку.** Ноль тестов при полусотне сюит — всегда сломанный host, и `~/Library/Logs/DiagnosticReports/GhostMeet-*.ips` скажет, чем именно.
+
 ### Silent audio failures
 
 Two independent bugs in this project produced *identical* symptoms — capture running, indicators lit, buffers arriving at the right rate, every sample zero, not one error code anywhere. Both came from the same root: **macOS reports one audio format and delivers another**, and the mismatch is never an error, only silence.

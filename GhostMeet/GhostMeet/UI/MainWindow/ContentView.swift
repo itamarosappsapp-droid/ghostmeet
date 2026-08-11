@@ -64,6 +64,17 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: controller.cornerRadius, style: .continuous))
+        // Содержимое занимает окно целиком, включая полосу заголовка.
+        //
+        // `.fullSizeContentView` растягивает туда contentView, но SwiftUI сам
+        // отступает от заголовка — и карточка начиналась НИЖЕ красной кнопки,
+        // из-за чего та выглядела висящей над окном отдельной полоской.
+        //
+        // Именно так, а не `NSHostingView.safeAreaRegions = []`: тот путь роняет
+        // приложение на старте. AppKit бросает исключение прямо в цикле
+        // отрисовки, и под тестами это выглядит особенно подло — host-приложение
+        // умирает раньше первого теста, а прогон рапортует «0 tests passed».
+        .ignoresSafeArea()
     }
 
     // MARK: - Header

@@ -137,11 +137,6 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
         // Empty sizing options: otherwise the hosting view imposes the SwiftUI
         // content's ideal size on the window and overrides the restored frame.
         hostingView.sizingOptions = []
-        // И никакой safe area. `.fullSizeContentView` растягивает contentView на
-        // всё окно, включая полосу заголовка, но SwiftUI по умолчанию отступает
-        // от неё сам — и содержимое начинается НИЖЕ красной кнопки, из-за чего
-        // она выглядит висящей над окном отдельной полоской, а не стоящей в нём.
-        hostingView.safeAreaRegions = []
         panel.contentView = hostingView
 
         restoreGeometry(of: panel)
@@ -212,22 +207,16 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
 
     /// Гасит и зажигает красную кнопку вслед за прослушиванием.
     ///
-    /// Через `styleMask`, а не через `isEnabled`: снятый `.closable` — это то,
-    /// чем macOS сама показывает «это окно сейчас не закрывается», и выглядит
-    /// это привычно, в отличие от кнопки, которая нажимается и не срабатывает.
+    /// Через `isEnabled` самой кнопки, а не через `styleMask` окна. Первая
+    /// версия снимала `.closable` — на вид то же самое, погашенный кружок macOS
+    /// рисует и так, и так, — но `styleMask` менялся из `onAppear`, то есть
+    /// посреди раскладки SwiftUI, и AppKit бросал на это исключение прямо в
+    /// цикле отрисовки. Приложение падало при запуске, а под тестами это
+    /// выглядело как «0 tests passed»: host-приложение умирало раньше первого
+    /// теста, и прогон рапортовал успех, не выполнив ничего.
+
     func setCloseEnabled(_ enabled: Bool) {
-        guard let panel else { return }
-        if enabled {
-            panel.styleMask.insert(.closable)
-        } else {
-            panel.styleMask.remove(.closable)
-        }
-        // Снятие `.closable` возвращает скрытые кнопки на место, поэтому прячем
-        // их снова: иначе рядом с красной проступают серые «свернуть» и
-        // «развернуть», которых в оверлее быть не должно.
-        for button in [NSWindow.ButtonType.miniaturizeButton, .zoomButton] {
-            panel.standardWindowButton(button)?.isHidden = true
-        }
+        panel?.standardWindowButton(.closeButton)?.isEnabled = enabled
     }
 
     // MARK: - NSWindowDelegate
