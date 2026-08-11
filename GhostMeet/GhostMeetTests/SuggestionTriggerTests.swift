@@ -89,6 +89,71 @@ struct SuggestionTriggerTests {
         #expect(call.provider.requests.count == 1)
     }
 
+    // MARK: - Два нажатия подряд
+
+    /// Прогон нашёл это первым же действием: интервьюер задал вопрос, нажали
+    /// «подробно», интервьюер задал следующий, нажали «коротко» — и ответ пришёл
+    /// на предыдущий вопрос.
+    @Test("Второе нажатие отвечает на второй вопрос, а не на первый")
+    func aSecondPressAnswersTheSecondQuestion() async {
+        let provider = StubLLMProvider(.fragments(["ответ"]))
+        let call = SuggestionCall(
+            provider: provider,
+            recognisesInOrder: ["Что такое B-tree?", "Чем GiST отличается от GIN?"]
+        )
+
+        call.says(.them)
+        call.engine.suggestInDetail()
+        #expect(await call.modelWasAsked(1))
+
+        call.says(.them)
+        call.engine.suggestBriefly()
+        #expect(await call.modelWasAsked(2))
+
+        let second = provider.requests[1].userPrompt
+        #expect(second.contains("Чем GiST отличается от GIN?"), "второй вопрос не доехал: \(second)")
+        #expect(provider.requests[0].userPrompt.contains("Что такое B-tree?"))
+    }
+
+    /// Найдено первым же живым прогоном и было молчаливым: распознавание
+    /// последней реплики не уложилось в бюджет, запрос ушёл без неё, и модель
+    /// ответила на предыдущий вопрос. Ответ выглядел обычным — связным и по
+    /// теме, просто не про то, что спросили секунду назад.
+    @Test("Слова не успели распознаться — запрос уходит, но об этом сказано")
+    func aLateRecognitionIsAnnounced() async {
+        let provider = StubLLMProvider(.fragments(["ответ"]))
+        let call = SuggestionCall(
+            provider: provider,
+            recognizer: StallingRecognizer(replies: ["Что такое B-tree?"], stallsAt: 2)
+        )
+        call.listen()
+
+        call.says(.them)
+        call.engine.suggestBriefly()
+        #expect(await call.modelWasAsked(1))
+
+        call.says(.them)
+        call.engine.suggestBriefly()
+        await call.waitOutRecognitionBudget()
+        #expect(await call.modelWasAsked(2))
+
+        let notice = call.engine.suggestions.last?.notice
+        #expect(notice?.contains("ещё распознавались") == true, "молчать об этом нельзя")
+    }
+
+    @Test("Все слова успели — лишней строки над ответом нет")
+    func aTimelyRecognitionSaysNothing() async {
+        let provider = StubLLMProvider(.fragments(["ответ"]))
+        let call = SuggestionCall(provider: provider, recognisesAs: "Что такое B-tree?")
+        call.listen()
+
+        call.says(.them)
+        call.engine.suggestBriefly()
+        #expect(await call.modelWasAsked(1))
+
+        #expect(call.engine.suggestions.last?.notice == nil)
+    }
+
     // MARK: - Оборванный ответ
 
     /// Пока приложение этого не умело, оборванная на полуслове подсказка
@@ -298,13 +363,15 @@ private struct SuggestionCall {
     init(
         provider: StubLLMProvider,
         recognisesAs text: String = "",
+        recognisesInOrder replies: [String] = [],
+        recognizer: (any SpeechRecognizer)? = nil,
         profile: UserProfile = .empty
     ) {
         let clock = ManualClock()
         self.clock = clock
         self.provider = provider
         self.engine = SessionEngine(
-            recognizer: RecognizerSpy(reply: text),
+            recognizer: recognizer ?? (replies.isEmpty ? RecognizerSpy(reply: text) : RecognizerSpy(replies: replies)),
             provider: provider,
             composer: PromptComposer(profile: { profile }),
             // No screen here: what this suite is about is what starts, cancels
@@ -321,6 +388,22 @@ private struct SuggestionCall {
     func says(_ channel: Channel, for seconds: TimeInterval = 1.2) {
         feed(seconds: seconds) { AudioFrames.speech(channel: channel, duration: frameLength) }
         feed(seconds: TurnSegmentationConfig.default.pauseThreshold + 0.2) { AudioFrames.silence(channel: channel, duration: frameLength) }
+    }
+
+    /// Включает прослушивание. Без источников звука это просто поднимает флаг —
+    /// кадры сюда и так приходят напрямую, — но флаг решает, какую строку
+    /// получит подсказка, а проверяем мы именно её.
+    func listen() {
+        try? engine.start()
+    }
+
+    /// Прожигает бюджет ожидания распознавания, не трогая звук.
+    ///
+    /// Сначала дожидается, пока ожидание зарегистрирует спящего: перевести часы
+    /// раньше — значит перевести их мимо, и тест станет монеткой.
+    func waitOutRecognitionBudget() async {
+        await clock.waitForSleeper()
+        clock.advance(by: SessionEngine.recognitionBudget + 0.5)
     }
 
     /// Waits until the newest suggestion has grown to `text`.
@@ -424,5 +507,31 @@ private final class StubLLMProvider: LLMProvider, @unchecked Sendable {
     /// arrives after the words, exactly as a real provider delivers it.
     func cut(_ cutoff: SuggestionCutoff) {
         lock.withLock { continuation }?.finish(throwing: cutoff)
+    }
+}
+
+
+/// Распознавание, которое зависает на указанной по счёту реплике.
+///
+/// Нужно, чтобы проверить единственный путь, на котором подсказка собирается из
+/// неполного транскрипта: бюджет ожидания истёк, слова ещё в работе.
+private actor StallingRecognizer: SpeechRecognizer {
+    private var replies: [String]
+    private let stallsAt: Int
+    private var seen = 0
+
+    init(replies: [String], stallsAt: Int) {
+        self.replies = replies
+        self.stallsAt = stallsAt
+    }
+
+    func transcribe(_ audio: SpeechAudio) async throws -> String {
+        seen += 1
+        if seen == stallsAt {
+            // Никогда не завершается сама: тест уводит время вперёд, и ждать её
+            // перестаёт бюджет, а не отмена — распознавание не отменяется.
+            try? await Task.sleep(nanoseconds: .max)
+        }
+        return replies.isEmpty ? "" : replies.removeFirst()
     }
 }

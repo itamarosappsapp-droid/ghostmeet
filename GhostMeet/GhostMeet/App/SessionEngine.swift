@@ -524,19 +524,20 @@ final class SessionEngine {
         isPreparingAnswer = true
 
         suggestionTask = Task { [weak self, clock] in
+            var heardEverything = true
             if !pending.isEmpty {
                 // Over budget the request goes out **without** the late words
                 // rather than not at all. They are not lost: recognition is never
                 // cancelled, so the text still lands in the transcript — one
                 // suggestion late, and without asking for anything of its own.
-                await clock.wait(upTo: Self.recognitionBudget) {
+                heardEverything = await clock.wait(upTo: Self.recognitionBudget) {
                     for task in pending { await task.value }
                 }
             }
             let context = await screen.value
             guard !Task.isCancelled else { return }
             self?.releaseScreen(screen)
-            self?.startSuggestion(ask, screen: context)
+            self?.startSuggestion(ask, screen: context, heardEverything: heardEverything)
         }
     }
 
@@ -570,7 +571,11 @@ final class SessionEngine {
         }
     }
 
-    private func startSuggestion(_ ask: SuggestionAsk, screen: ScreenContext) {
+    private func startSuggestion(
+        _ ask: SuggestionAsk,
+        screen: ScreenContext,
+        heardEverything: Bool = true
+    ) {
         isPreparingAnswer = false
         guard let provider else { return }
         let request = composer.compose(
@@ -579,7 +584,12 @@ final class SessionEngine {
             screen: screen,
             accepting: provider.capabilities
         )
-        stream(request, from: provider, screen: screen, notice: notice(for: ask))
+        stream(
+            request,
+            from: provider,
+            screen: screen,
+            notice: notice(for: ask, heardEverything: heardEverything)
+        )
     }
 
     /// What the user has to be told about the answer that is starting.
@@ -591,9 +601,26 @@ final class SessionEngine {
     /// is indistinguishable from an answer built from the question, and without a
     /// word the user blames the model for it. `Solve on screen` gets no notice:
     /// it reads no conversation, so listening changes nothing about its answer.
-    private func notice(for ask: SuggestionAsk) -> String? {
-        guard ask.readsTranscript, !isListening else { return nil }
-        return "Прослушивание выключено — отвечаю только по экрану."
+    /// **Второй случай найден первым же живым прогоном, и он был молчаливым.**
+    /// Интервьюер задал вопрос, пользователь нажал — распознавание последней
+    /// реплики не уложилось в бюджет, запрос ушёл без неё, и модель ответила на
+    /// предыдущий вопрос. Ответ при этом выглядел совершенно обычно: он связный,
+    /// он по теме разговора, он просто не про то, что спросили секунду назад.
+    /// Отличить это от «модель не поняла вопрос» пользователь не мог никак.
+    ///
+    /// Запрос по-прежнему уходит: ждать дольше — значит терять то, ради чего
+    /// нажали. Но теперь над ответом стоит строка, и следующее нажатие уже
+    /// застанет слова в транскрипте — распознавание не отменяется никогда.
+    private func notice(for ask: SuggestionAsk, heardEverything: Bool) -> String? {
+        guard ask.readsTranscript else { return nil }
+        if !isListening { return "Прослушивание выключено — отвечаю только по экрану." }
+        if !heardEverything {
+            return """
+            Последние слова ещё распознавались — ответ собран без них. \
+            Нажмите ещё раз, если он не про то.
+            """
+        }
+        return nil
     }
 
     /// Says in the feed that there is no model to answer with.
