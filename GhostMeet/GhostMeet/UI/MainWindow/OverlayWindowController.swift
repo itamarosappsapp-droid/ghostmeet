@@ -137,6 +137,11 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
         // Empty sizing options: otherwise the hosting view imposes the SwiftUI
         // content's ideal size on the window and overrides the restored frame.
         hostingView.sizingOptions = []
+        // И никакой safe area. `.fullSizeContentView` растягивает contentView на
+        // всё окно, включая полосу заголовка, но SwiftUI по умолчанию отступает
+        // от неё сам — и содержимое начинается НИЖЕ красной кнопки, из-за чего
+        // она выглядит висящей над окном отдельной полоской, а не стоящей в нём.
+        hostingView.safeAreaRegions = []
         panel.contentView = hostingView
 
         restoreGeometry(of: panel)
