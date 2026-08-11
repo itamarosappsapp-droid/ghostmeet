@@ -20,6 +20,7 @@ The audio investigation is over and its scaffolding is gone: no diagnostics obje
 GhostMeet/                      ← repo root
 ├── CLAUDE.md
 ├── docs/                       ← the authoritative spec (read before implementing)
+├── scripts/                    ← make-dmg.sh: Release → подписанный DMG для коллег
 └── GhostMeet/                  ← SRCROOT
     ├── GhostMeet.xcodeproj
     ├── Info.plist              ← lives HERE, outside the source folder — see below
@@ -125,6 +126,22 @@ The app is signed with a **stable Apple Development identity** (personal team). 
 A macOS always-on-top overlay that assists during video calls (Meet, Telemost, Zoom, Teams). It listens to two audio channels, transcribes locally, and answers via pluggable LLMs — while staying invisible to screen sharing.
 
 **The MVP targets one scenario: a technical interview where the user is the candidate.** That is the tightest requirement set — latency is critical and `Solve on screen` is a primary mode rather than a bonus. The scenario also settled the loop: a candidate knows most answers, so suggestions are asked for, not delivered (ADR-0008). The old worry that reaching for a chord on camera is conspicuous weighs less than it looked — in a technical interview the hands are already on the keyboard. Other scenarios are relaxations of this one and are not designed for separately.
+
+## Отдать сборку коллегам
+
+```bash
+./scripts/make-dmg.sh
+```
+
+Собирает Release, проверяет подпись и наличие всех четырёх строк разрешений в `Info.plist`, кладёт в `dist/` образ с приложением, ярлыком «Программы» и инструкцией.
+
+**Нотаризации нет и не будет без Developer ID** — у проекта только сертификат Apple Development, и `spctl` такую сборку отклоняет. Подпись при этом настоящая и стабильная (Team ID `Z6F3T2TJVB`), и это важнее ad-hoc: разрешения macOS привязаны к подписи, при ad-hoc каждая новая сборка спрашивала бы микрофон и запись экрана заново. Цена — карантин, снимается одной командой, и она напечатана и в выводе скрипта, и в файле внутри образа:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/GhostMeet.app
+```
+
+Стенды для тестирования собираются отдельно — `python3 .scratch/interview-packs/build.py` даёт семь паков по специализациям и архив; см. [.scratch/interview-packs/README.md](.scratch/interview-packs/README.md).
 
 ## Where decisions live
 
