@@ -83,11 +83,8 @@ from the Applications folder, not from Launchpad, where it does not appear.
 
 ## Build from source
 
-**Xcode 26.4 or newer (Swift 6.3).** Not a preference: the project builds with
-`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, which makes the compiler apply an implicit
-`nonisolated` to every `actor` declaration — something Swift accepts only from 6.3. On 6.2 it fails
-with `'nonisolated' modifier cannot be applied to this declaration`, pointing at a file that
-contains no `nonisolated` at all.
+**Xcode 26 or newer.** The project builds with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, a
+Swift 6.2 build setting; on Xcode 16.x it does not build at all.
 
 The Xcode project lives one level down, at `GhostMeet/GhostMeet.xcodeproj`:
 
