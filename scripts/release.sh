@@ -67,7 +67,11 @@ PROJECT_VERSION="$(xcodebuild -project "$PROJECT" -showBuildSettings -target Gho
 [ "$PROJECT_VERSION" = "$VERSION" ] \
   || fail "MARKETING_VERSION в проекте — $PROJECT_VERSION, а релиз $VERSION. Поправьте проект и закоммитьте"
 
-echo "  дерево чистое, тега нет, CHANGELOG и проект согласны на $VERSION"
+if [ "$TAG_EXISTS" = yes ]; then
+  echo "  дерево чистое, тег $TAG уже на этом коммите, CHANGELOG и проект согласны на $VERSION"
+else
+  echo "  дерево чистое, тега нет, CHANGELOG и проект согласны на $VERSION"
+fi
 
 # Тесты гоняются до сборки образа: собранный и подписанный DMG со сломанными тестами — это
 # двадцать минут, потраченных на то, чтобы его выбросить.
