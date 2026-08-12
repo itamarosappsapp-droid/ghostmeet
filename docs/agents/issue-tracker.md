@@ -2,7 +2,7 @@
 
 Issues and specs (you may know a spec as a PRD) for this repo live as markdown files in `.scratch/`.
 
-This repo has no git remote — work is tracked entirely in-repo.
+Work is tracked entirely in-repo, deliberately: the repository has a remote, but GitHub Issues are not used. A ticket and the code that closes it travel in one commit, and a checkout carries the whole record with it.
 
 ## Conventions
 

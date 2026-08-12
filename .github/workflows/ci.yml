@@ -1,0 +1,130 @@
+name: CI
+
+# CI собирает и прогоняет тесты — и никогда не подписывает.
+#
+# Подпись остаётся на машине разработчика: разрешения macOS привязаны к подписи, а сертификат у
+# проекта личный (Apple Development, не Developer ID). Отдать его закрытую часть в secrets значит
+# разрешить подписывать этим именем всякому, кто получит доступ к репозиторию. Релиз выпускает
+# scripts/release.sh локально — см. docs/releasing.md.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+# Новый push в ту же ветку отменяет предыдущий прогон: macOS-раннеры дорогие и медленные,
+# а результат устаревшего коммита никому не нужен.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PROJECT: GhostMeet/GhostMeet.xcodeproj
+
+jobs:
+  test:
+    name: Сборка и тесты
+    runs-on: macos-latest
+    # Прогон целиком укладывается в единицы минут; час — это защита от зависшего host-процесса,
+    # а не запас на рост. Без него повисший тест-хост жёг бы раннер до общего лимита.
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Окружение
+        run: |
+          sw_vers
+          xcodebuild -version
+
+      # Пакеты кладутся в каталог внутри рабочей копии, а не в DerivedData: так их путь известен
+      # заранее и его можно закешировать.
+      - name: Кеш зависимостей SPM
+        uses: actions/cache@v4
+        with:
+          path: .spm
+          key: spm-${{ runner.os }}-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Тесты
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project "$PROJECT" \
+            -scheme GhostMeet \
+            -destination 'platform=macOS' \
+            -derivedDataPath .build/ci-derived \
+            -clonedSourcePackagesDirPath .spm \
+            -resultBundlePath .build/ci-result.xcresult \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM= \
+            PROVISIONING_PROFILE_SPECIFIER= \
+            test 2>&1 | tee .build/ci-tests.log
+
+      # «✔ Test run with 0 tests in N suites passed» с кодом возврата 65 — это упавший host, а не
+      # успех: сюиты объявились, приложение умерло раньше первого теста, и их ноль тестов честно
+      # не упал. Строка выглядит зелёной, и один раз уже была принята за зелёный прогон.
+      #
+      # Подпись ad-hoc (CODE_SIGN_IDENTITY=-) здесь обязательна: на Apple silicon неподписанный
+      # бинарник не запускается вовсе, а тесты хостятся внутри GhostMeet.app.
+      - name: Ноль тестов — это падение
+        if: always()
+        run: |
+          if grep -q "Test run with 0 tests" .build/ci-tests.log; then
+            echo "::error::Ноль тестов — host-приложение упало на старте, а не «всё прошло»"
+            exit 1
+          fi
+          grep -oE "Test run with [0-9]+ tests? in [0-9]+ suites?" .build/ci-tests.log | tail -1
+
+      - name: Логи прогона
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            .build/ci-tests.log
+            .build/ci-result.xcresult
+          retention-days: 7
+
+  version:
+    name: Версия и CHANGELOG
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Версия читается из pbxproj текстом, без xcodebuild: ради одной строки поднимать
+      # macOS-раннер незачем.
+      - name: Версия согласована
+        run: |
+          set -euo pipefail
+          PBXPROJ=GhostMeet/GhostMeet.xcodeproj/project.pbxproj
+          VERSION=$(grep -m1 -oE 'MARKETING_VERSION = [^;]+' "$PBXPROJ" | cut -d' ' -f3)
+          COUNT=$(grep -c "MARKETING_VERSION = $VERSION;" "$PBXPROJ")
+
+          echo "MARKETING_VERSION = $VERSION (в $COUNT конфигурациях)"
+
+          # Четыре — это два таргета × Debug/Release. Меньше значит, что версию проставили
+          # частично, и приложение с тестами разъедутся по версиям.
+          if [ "$COUNT" -ne 4 ]; then
+            echo "::error::MARKETING_VERSION проставлен в $COUNT конфигурациях из четырёх"
+            exit 1
+          fi
+
+          if ! grep -q "^## \[$VERSION\]" CHANGELOG.md; then
+            echo "::error::В CHANGELOG.md нет раздела ## [$VERSION]"
+            exit 1
+          fi
+
+          # На теге проверка строже: тег, разошедшийся с версией внутри приложения, — это релиз,
+          # который невозможно опознать по бандлу.
+          if [ "${GITHUB_REF_TYPE:-}" = tag ]; then
+            TAG="${GITHUB_REF_NAME#v}"
+            if [ "$TAG" != "$VERSION" ]; then
+              echo "::error::Тег $GITHUB_REF_NAME не совпадает с версией проекта $VERSION"
+              exit 1
+            fi
+            echo "Тег $GITHUB_REF_NAME совпадает с версией проекта"
+          fi

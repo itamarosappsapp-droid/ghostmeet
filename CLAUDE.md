@@ -19,8 +19,11 @@ The audio investigation is over and its scaffolding is gone: no diagnostics obje
 ```
 GhostMeet/                      ← repo root
 ├── CLAUDE.md
+├── README.md / README.ru.md    ← витрина репозитория, английский основной
+├── CHANGELOG.md                ← Keep a Changelog; версии с 0.0.1, ретроспективно
 ├── docs/                       ← the authoritative spec (read before implementing)
-├── scripts/                    ← make-dmg.sh: Release → подписанный DMG для коллег
+├── scripts/                    ← set-version.sh → release.sh → make-dmg.sh
+├── .github/workflows/          ← CI: сборка и тесты; ничего не подписывает
 └── GhostMeet/                  ← SRCROOT
     ├── GhostMeet.xcodeproj
     ├── Info.plist              ← lives HERE, outside the source folder — see below
@@ -135,13 +138,27 @@ A macOS always-on-top overlay that assists during video calls (Meet, Telemost, Z
 
 **The MVP targets one scenario: a technical interview where the user is the candidate.** That is the tightest requirement set — latency is critical and `Solve on screen` is a primary mode rather than a bonus. The scenario also settled the loop: a candidate knows most answers, so suggestions are asked for, not delivered (ADR-0008). The old worry that reaching for a chord on camera is conspicuous weighs less than it looked — in a technical interview the hands are already on the keyboard. Other scenarios are relaxations of this one and are not designed for separately.
 
+## Версии и релизы
+
+Семантическое версионирование с **0.1.0**; пока мажорная — ноль, ломающее несёт минорная. Версия живёт в `MARKETING_VERSION`, **во всех четырёх конфигурациях** pbxproj (два таргета × Debug/Release), и расхождение ловится в трёх местах — `set-version.sh`, CI и `release.sh`. Порядок выпуска и его основания — [docs/releasing.md](docs/releasing.md).
+
+```bash
+./scripts/set-version.sh 0.2.0   # версия в проекте + номер сборки
+#   ← раздел ## [0.2.0] в CHANGELOG.md, затем коммит
+./scripts/release.sh 0.2.0       # проверки → тесты → DMG → тег → публикация
+```
+
+Версии `0.0.1`–`0.0.6` реконструированы задним числом по истории: проект шёл без версий до закрытия MVP. Это запись вех, а не выпущенные сборки — DMG собирался только для `0.1.0`.
+
+**CI собирает и прогоняет тесты, но ничего не подписывает и не публикует.** Разрешения macOS привязаны к подписи, сертификат у проекта личный (Apple Development), и его закрытая часть в secrets означала бы, что подписывать этим именем может всякий, кто получит доступ к репозиторию. Релиз собирает и подписывает машина разработчика.
+
 ## Отдать сборку коллегам
 
 ```bash
 ./scripts/make-dmg.sh
 ```
 
-Собирает Release, проверяет подпись и наличие всех четырёх строк разрешений в `Info.plist`, кладёт в `dist/` образ с приложением, ярлыком «Программы» и инструкцией.
+Собирает Release, проверяет подпись и наличие всех четырёх строк разрешений в `Info.plist`, кладёт в `dist/` образ с приложением, ярлыком «Программы» и инструкцией. Отдельно от `release.sh` нужен для сборки без тега — показать коллеге промежуточное состояние.
 
 **Нотаризации нет и не будет без Developer ID** — у проекта только сертификат Apple Development, и `spctl` такую сборку отклоняет. Подпись при этом настоящая и стабильная (Team ID `Z6F3T2TJVB`), и это важнее ad-hoc: разрешения macOS привязаны к подписи, при ad-hoc каждая новая сборка спрашивала бы микрофон и запись экрана заново. Цена — карантин, снимается одной командой, и она напечатана и в выводе скрипта, и в файле внутри образа:
 
@@ -256,7 +273,7 @@ Declared in [GhostMeet/Info.plist](GhostMeet/Info.plist), not in the spec — th
 
 ### Issue tracker
 
-Issues and specs live as markdown files under `.scratch/<feature-slug>/` — this repo has no git remote. See [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md).
+Issues and specs live as markdown files under `.scratch/<feature-slug>/` — in-repo, not in GitHub Issues, even though the repository now has a remote. See [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md).
 
 ### Triage labels
 
