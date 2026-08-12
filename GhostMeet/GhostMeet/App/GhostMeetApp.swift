@@ -68,6 +68,17 @@ final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
         recognition: recognition
     )
 
+    /// Whether a newer build has been published.
+    ///
+    /// Built here because the switch that permits it lives in the settings store
+    /// and the line that shows it lives in the overlay, and this is the only
+    /// place that holds both. The store is read at request time rather than
+    /// copied, so turning the check off takes effect from the next launch on
+    /// without anything having to be told.
+    private lazy var updates = UpdateCheck { [weak self] in
+        self?.settings.checksForUpdates ?? false
+    }
+
     /// The global chords and what they do.
     ///
     /// Built on Carbon's `RegisterEventHotKey`, which needs **no permission** —
@@ -85,6 +96,7 @@ final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
         // The readiness strip reads the same store the settings screen edits —
         // there is one, and the strip must not be able to disagree with it.
         settings: settings,
+        updates: updates,
         stateStore: WindowStateStore(defaults: defaults)
     )
 
@@ -125,6 +137,18 @@ final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
         // Listening is not started here on purpose: the microphone prompt would
         // come up before the user has asked for anything, and the first thing
         // they see would be a permission dialog rather than the overlay.
+
+        // Ask whether a newer build exists — in the background, so a slow or
+        // unreachable network costs the launch nothing, and the window comes up
+        // the same either way.
+        //
+        // Never under tests. The suite hosts itself inside the app, so every
+        // `xcodebuild test` would otherwise put a request to GitHub on the wire:
+        // noise on a developer's machine, and a rate limit waiting to happen on
+        // a CI runner where hundreds of jobs share one address.
+        if !AppDefaults.isRunningTests() {
+            Task { await updates.run() }
+        }
 
         wireHotkeys()
 

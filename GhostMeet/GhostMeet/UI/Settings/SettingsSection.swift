@@ -21,6 +21,7 @@ enum SettingsSection: String, CaseIterable, Sendable {
     case provider
     case providerKey
     case segmentation
+    case updates
 }
 
 /// Opening the settings window, optionally at a section.

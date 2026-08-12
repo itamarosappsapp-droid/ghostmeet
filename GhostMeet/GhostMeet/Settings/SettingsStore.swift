@@ -63,6 +63,7 @@ final class SettingsStore {
         static let themCaptureBackend = "settings.themCaptureBackend"
         static let providerSelection = "settings.providerSelection"
         static let hotkeys = "settings.hotkeys"
+        static let checksForUpdates = "settings.checksForUpdates"
     }
 
     // MARK: - Persisted, user-scoped state
@@ -171,6 +172,27 @@ final class SettingsStore {
     // to point the other way — system voice processing costs every *other*
     // process on the machine 28–32 dB, the browser holding the call included. So
     // there is no backend, and no setting, under which it may come back on.
+
+    /// Whether the app asks GitHub at launch whether a newer build exists.
+    ///
+    /// **On by default, which is the one place this app reaches out without
+    /// being asked.** The reason is how it is delivered: a disk image handed to a
+    /// colleague, with no store, no updater and no way of learning about a new
+    /// version other than being told. A check the user has to remember to run is
+    /// a check nobody runs, and the machine stays on the build it was given.
+    ///
+    /// What the request carries is the whole of the argument for the default: an
+    /// IP address and the running version, in a `User-Agent`. No transcript, no
+    /// profile, no identifier of the machine or the user — and the answer is a
+    /// public page anybody can open. It is off with one switch, and off means
+    /// no request at all rather than a request whose answer is ignored.
+    ///
+    /// Stored as a bare `Bool`, so the absent value has to be handled explicitly
+    /// at load: `UserDefaults.bool(forKey:)` answers false for "never written",
+    /// which would silently ship the opposite default.
+    var checksForUpdates: Bool {
+        didSet { defaults.set(checksForUpdates, forKey: DefaultsKey.checksForUpdates) }
+    }
 
     /// Which chord runs which global action.
     ///
@@ -315,6 +337,13 @@ final class SettingsStore {
             .flatMap(ThemCaptureBackend.init(rawValue:)) ?? .default
         self.hotkeys = Self.decode(HotkeyBindings.self, from: defaults, key: DefaultsKey.hotkeys)
             ?? .default
+        // Absent means "never asked", and the shipped answer to that is yes —
+        // see the property. Read through `object(forKey:)` because `bool(forKey:)`
+        // cannot tell "written as false" from "never written" and would turn the
+        // default upside down on every fresh install.
+        self.checksForUpdates = defaults.object(forKey: DefaultsKey.checksForUpdates) == nil
+            ? true
+            : defaults.bool(forKey: DefaultsKey.checksForUpdates)
         // A selection naming a provider that has since been removed falls back
         // to the default rather than leaving the app pointed at nothing.
         let stored = Self.decode(ProviderSelection.self, from: defaults, key: DefaultsKey.providerSelection)

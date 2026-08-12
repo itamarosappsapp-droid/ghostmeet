@@ -27,6 +27,12 @@ screen recording, a headset swapped mid-call was survived, both suggestion genre
 
 - Versioning: `MARKETING_VERSION` starts at `0.1.0`, a changelog, retroactive tags, and a release
   script that builds, signs, and publishes a DMG.
+- An update check at launch ([ADR-0010](docs/adr/0010-update-check-at-launch.md)): one request to
+  GitHub for the latest published version, and one line in the window when it is newer than the
+  build in hand, linking to the release page. It ships in this first release on purpose — a build
+  without it would be the last one its owner ever hears about. On by default because the app is
+  handed over as a disk image with no updater; off with one switch in settings, and off means no
+  request at all. Every failure is silence, and the line goes away as soon as listening starts.
 - A DMG for colleagues (`scripts/make-dmg.sh`) that verifies the signature and all four
   permission strings before packaging, and ships instructions for the quarantine flag.
 - Seven interview packs by specialisation for manual testing — each runs a whole interview aloud

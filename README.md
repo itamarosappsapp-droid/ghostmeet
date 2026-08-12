@@ -120,6 +120,11 @@ Two traps worth knowing before you touch the project file:
   will receive the text and says whether it leaves the machine.
 - Logging is lifecycle-only. There is no per-frame logging anywhere, deliberately: in this app a
   per-frame log writes the conversation to disk.
+- **One request is not yours: the update check.** At launch the app asks GitHub for the latest
+  published version and shows one line if it is newer. It carries an IP address and the running
+  version, nothing else, and the answer is a page anyone can open. On by default because there is
+  no updater and no other way to learn a new build exists; one switch in settings turns it off, and
+  off means no request at all. See [ADR-0010](docs/adr/0010-update-check-at-launch.md).
 
 ## Limits
 
@@ -141,7 +146,7 @@ question:
 | [docs/GhostMeet.md](docs/GhostMeet.md) | the product spec — features, stack, file layout, roadmap |
 | [docs/GhostMeet-Prompts.md](docs/GhostMeet-Prompts.md) | the authoritative prompt texts, matched word for word by a test |
 | [CONTEXT.md](CONTEXT.md) | the glossary: `You`, `Them`, `Реплика`, `Подсказка`, `Профиль` have precise definitions |
-| [docs/adr/](docs/adr/) | nine architecture decisions, superseded ones kept for the reasoning they carry |
+| [docs/adr/](docs/adr/) | ten architecture decisions, superseded ones kept for the reasoning they carry |
 | [CHANGELOG.md](CHANGELOG.md) | what landed, when, and why |
 
 Two rules govern changes here: documents are corrected by the same change that touches the code,

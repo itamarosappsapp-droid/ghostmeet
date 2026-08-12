@@ -45,6 +45,11 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
     /// stand-in full of placeholders. The strip is then simply absent.
     private let settings: SettingsStore?
 
+    /// Whether a newer build exists — passed through for the same reason and
+    /// with the same `nil` case as the store above: the window tests have no
+    /// user to be out of date.
+    private let updates: UpdateCheck?
+
     /// Opening the settings window is somebody else's job — the overlay only
     /// has the button. In accessory mode there is no menu bar to put it in.
     private let openSettings: OpenSettings
@@ -59,6 +64,7 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
         hotkeys: HotkeyCenter,
         openSettings: @escaping OpenSettings,
         settings: SettingsStore? = nil,
+        updates: UpdateCheck? = nil,
         configuration: OverlayWindowConfiguration = .overlay,
         stateStore: WindowStateStore = WindowStateStore()
     ) {
@@ -67,6 +73,7 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
         self.hotkeys = hotkeys
         self.openSettings = openSettings
         self.settings = settings
+        self.updates = updates
         self.configuration = configuration
         self.stateStore = stateStore
         self.opacity = configuration.clampOpacity(stateStore.opacity ?? configuration.defaultOpacity)
@@ -130,6 +137,7 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
                 session: session,
                 recognition: recognition,
                 settings: settings,
+                updates: updates,
                 hotkeys: hotkeys,
                 openSettings: openSettings
             )

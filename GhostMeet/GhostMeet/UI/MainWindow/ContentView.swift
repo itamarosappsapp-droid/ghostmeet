@@ -34,6 +34,10 @@ struct ContentView: View {
     /// nothing true to say is better absent than filled with placeholders.
     let settings: SettingsStore?
 
+    /// Whether a newer build has been published. Optional for the same reason as
+    /// the store above: the window-plumbing tests build this view without one.
+    var updates: UpdateCheck?
+
     /// The global chords and their bindings. Shown here so that the one thing a
     /// user needs after pressing the panic key — the chord that brings the window
     /// back — is written down in the window itself.
@@ -48,6 +52,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider().opacity(0.4)
+            updateNotice
             recognitionNotice
             failureNotice
             routeNotice
@@ -120,6 +125,23 @@ struct ContentView: View {
     private var precallStrip: some View {
         if let settings {
             PrecallStripView(settings: settings, openSettings: openSettings)
+        }
+    }
+
+    // MARK: - A newer build
+
+    /// One line saying a newer GhostMeet exists — see `UpdateNoticeView` for why
+    /// it is a line of its own rather than a fourth field in the strip above.
+    ///
+    /// **Hidden while listening.** The app is delivered as a disk image, so this
+    /// is the only way a machine ever learns it is out of date; it is also the
+    /// least urgent thing on this window, and the call is what the window is
+    /// for. Before the call it is read, during the call it would be one line of
+    /// the suggestion feed spent on news.
+    @ViewBuilder
+    private var updateNotice: some View {
+        if let updates, let release = updates.available, !session.isListening {
+            UpdateNoticeView(release: release) { updates.dismiss() }
         }
     }
 

@@ -57,6 +57,7 @@ struct SettingsView: View {
                 providerSection.id(SettingsSection.provider)
                 providerKeySection.id(SettingsSection.providerKey)
                 segmentationSection.id(SettingsSection.segmentation)
+                updatesSection.id(SettingsSection.updates)
             }
             .formStyle(.grouped)
             .frame(minWidth: 480, minHeight: 620)
@@ -525,6 +526,39 @@ struct SettingsView: View {
                 store.resetTurnSegmentationToDefaults()
             }
         }
+    }
+
+    // MARK: - Обновления
+
+    /// The one switch that decides whether the app talks to anything but the
+    /// provider the user chose.
+    ///
+    /// It says what leaves the machine rather than promising that nothing does.
+    /// The app is delivered as a disk image with no updater, so the check is on
+    /// by default — and a default that reaches out deserves to be stated in
+    /// plain words next to the switch that turns it off, not buried in a privacy
+    /// section nobody opens.
+    private var updatesSection: some View {
+        Section("Обновления") {
+            Toggle("Проверять новую версию при запуске", isOn: $store.checksForUpdates)
+            Text("""
+                Один запрос к GitHub при старте — за номером последней версии. \
+                Уходит IP и версия приложения; разговор, профиль и заготовки не уходят никуда. \
+                Выключенная проверка не делает запроса вовсе.
+                """)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Text("Установлена версия \(installedVersion)")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// What this build calls itself. Shown because the notice in the overlay
+    /// names the *new* version, and «новее чего» is a fair question to be able
+    /// to answer without opening the bundle.
+    private var installedVersion: String {
+        AppVersion.running().map(String.init(describing:)) ?? "неизвестна"
     }
 
     /// The RMS gate is a `Float` in the model but a `TimeInterval` in the
