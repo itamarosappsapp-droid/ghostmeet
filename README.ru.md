@@ -1,8 +1,8 @@
 # GhostMeet
 
-[![CI](https://github.com/miker059/ghostmeet/actions/workflows/ci.yml/badge.svg)](https://github.com/miker059/ghostmeet/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/miker059/ghostmeet?display_name=tag&sort=semver)](https://github.com/miker059/ghostmeet/releases)
-[![Platform](https://img.shields.io/badge/macOS-14.4%2B-black)](https://github.com/miker059/ghostmeet)
+[![CI](https://github.com/slimgo/ghostmeet/actions/workflows/ci.yml/badge.svg)](https://github.com/slimgo/ghostmeet/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/slimgo/ghostmeet?display_name=tag&sort=semver)](https://github.com/slimgo/ghostmeet/releases)
+[![Platform](https://img.shields.io/badge/macOS-14.4%2B-black)](https://github.com/slimgo/ghostmeet)
 
 Оверлей поверх всех окон, который помогает во время видеозвонка. Слушает **два канала звука**,
 распознаёт речь **на самой машине** и отвечает через ту модель, которую вы выбрали, — оставаясь
@@ -65,7 +65,7 @@ English version — [README.md](README.md).
 
 ## Установка
 
-Скачайте DMG из [Releases](https://github.com/miker059/ghostmeet/releases), перетащите приложение в
+Скачайте DMG из [Releases](https://github.com/slimgo/ghostmeet/releases), перетащите приложение в
 «Программы» и снимите карантин:
 
 ```bash
@@ -160,3 +160,8 @@ xcodebuild -project GhostMeet/GhostMeet.xcodeproj -scheme GhostMeet -destination
 CHANGELOG, прогонит тесты, соберёт и подпишет DMG, поставит тег и зальёт релиз. CI на GitHub
 собирает и прогоняет тесты на каждый push, но ничего не подписывает. Подробнее —
 [docs/releasing.md](docs/releasing.md).
+
+## Лицензия
+
+[MIT](LICENSE). Паки собеседований и стенды в `.scratch/` — часть репозитория и лежат под той же
+лицензией; у моделей, к которым вы подключаете приложение, свои условия, а ключи API ваши.

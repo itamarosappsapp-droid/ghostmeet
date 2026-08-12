@@ -1,8 +1,8 @@
 # GhostMeet
 
-[![CI](https://github.com/miker059/ghostmeet/actions/workflows/ci.yml/badge.svg)](https://github.com/miker059/ghostmeet/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/miker059/ghostmeet?display_name=tag&sort=semver)](https://github.com/miker059/ghostmeet/releases)
-[![Platform](https://img.shields.io/badge/macOS-14.4%2B-black)](https://github.com/miker059/ghostmeet)
+[![CI](https://github.com/slimgo/ghostmeet/actions/workflows/ci.yml/badge.svg)](https://github.com/slimgo/ghostmeet/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/slimgo/ghostmeet?display_name=tag&sort=semver)](https://github.com/slimgo/ghostmeet/releases)
+[![Platform](https://img.shields.io/badge/macOS-14.4%2B-black)](https://github.com/slimgo/ghostmeet)
 
 An always-on-top macOS overlay that assists during a video call. It listens to **two audio
 channels**, transcribes them **on device**, and answers through whichever LLM you point it at —
@@ -65,7 +65,7 @@ Apple Speech fallback).
 
 ## Install
 
-Download the DMG from [Releases](https://github.com/miker059/ghostmeet/releases), drag the app to
+Download the DMG from [Releases](https://github.com/slimgo/ghostmeet/releases), drag the app to
 Applications, then remove the quarantine flag:
 
 ```bash
@@ -162,3 +162,9 @@ Releases are cut locally, because the signing identity stays on one machine:
 The script refuses a dirty tree, checks that the version matches the project and has a section in
 the changelog, runs the tests, builds and signs the DMG, tags, and uploads. CI on GitHub builds
 and tests every push but never signs. See [docs/releasing.md](docs/releasing.md).
+
+## License
+
+[MIT](LICENSE). The interview packs and benches under `.scratch/` are part of the repository and
+carry the same licence; the models you point the app at have their own terms, and the API keys are
+yours.
