@@ -83,6 +83,12 @@ Spotlight или из папки «Программы»; в Launchpad его н�
 
 ## Сборка из исходников
 
+**Нужен Xcode 26.4 или новее (Swift 6.3).** Это не пожелание: проект собирается с
+`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, из-за чего компилятор навешивает на каждый `actor`
+неявный `nonisolated` — а принимать его Swift научился только в 6.3. На 6.2 сборка падает с
+`'nonisolated' modifier cannot be applied to this declaration`, указывая при этом на файл, где
+слова `nonisolated` нет вовсе.
+
 Проект Xcode лежит уровнем ниже, в `GhostMeet/GhostMeet.xcodeproj`:
 
 ```bash

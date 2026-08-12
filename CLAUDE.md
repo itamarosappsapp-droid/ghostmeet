@@ -75,6 +75,7 @@ plutil -p ~/Library/Developer/Xcode/DerivedData/GhostMeet-*/Build/Products/Debug
 - Because the source group is file-system-synchronized, **new `.swift` files are added to the target just by creating them on disk** — no pbxproj edit needed. Adding an SPM dependency, a target, or a scheme still means editing `project.pbxproj` by hand.
 - **Give every concurrent build its own `-derivedDataPath`.** Parallel agents sharing the default DerivedData corrupt each other's builds.
 - `SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY` is on, so `CGRect` / `CGSize` need an explicit `import CoreGraphics` even where `Foundation` is already imported. A standalone `swiftc -typecheck` without the flag will not reproduce the error.
+- **The project needs Swift 6.3 (Xcode 26.4 or newer) and will not compile on 6.2.** `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` makes the compiler apply an implicit `nonisolated` to every `actor` declaration, and accepting that is a 6.3 change; on 6.2 it is `'nonisolated' modifier cannot be applied to this declaration`, thrown at a file that contains no `nonisolated` anywhere (`RecognizerSpy.swift` was the first one to compile). This is why CI pins `macos-26` and selects the newest installed Xcode: `macos-latest` still resolves to macOS 15, whose **default** Xcode is 16.4 — Swift 6.1 — and the build dies before the first test while the failure reads as «упали тесты».
 
 ### «0 tests passed» — это падение, а не успех
 

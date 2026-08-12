@@ -26,7 +26,12 @@ env:
 jobs:
   test:
     name: Сборка и тесты
-    runs-on: macos-latest
+    # Не macos-latest. Тот сейчас разрешается в macOS 15, где Xcode по умолчанию
+    # 16.4 — Swift 6.1, и проект на нём не собирается вовсе: при
+    # SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor компилятор навешивает на каждый
+    # `actor` неявный `nonisolated`, а принимать его Swift научился только в 6.3.
+    # Падает это на компиляции, до первого теста, и выглядит как «упали тесты».
+    runs-on: macos-26
     # Прогон целиком укладывается в единицы минут; час — это защита от зависшего host-процесса,
     # а не запас на рост. Без него повисший тест-хост жёг бы раннер до общего лимита.
     timeout-minutes: 60
@@ -34,10 +39,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Новейший из установленных, а не прибитый гвоздями путь: образы
+      # обновляются, конкретную версию однажды снимут, и прибитый путь сломает
+      # сборку молча. Выбор печатается аннотацией (`::notice::`), а не только в
+      # лог: аннотации видны через открытый API, а логи Actions без токена — нет,
+      # и именно на этом диагностика первого падения встала.
+      - name: Xcode поновее
+        run: |
+          set -euo pipefail
+          newest=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$newest" ]; then
+            sudo xcode-select -s "$newest"
+          fi
+          echo "::notice title=Xcode::$(xcodebuild -version | tr '\n' ' ')"
+          echo "::notice title=Swift::$(swift --version 2>&1 | head -1)"
+          echo "::notice title=macOS::$(sw_vers -productVersion)"
+
       - name: Окружение
         run: |
           sw_vers
           xcodebuild -version
+          swift --version
 
       # Пакеты кладутся в каталог внутри рабочей копии, а не в DerivedData: так их путь известен
       # заранее и его можно закешировать.
@@ -70,14 +92,31 @@ jobs:
       #
       # Подпись ad-hoc (CODE_SIGN_IDENTITY=-) здесь обязательна: на Apple silicon неподписанный
       # бинарник не запускается вовсе, а тесты хостятся внутри GhostMeet.app.
-      - name: Ноль тестов — это падение
+      - name: Прогон был настоящим
         if: always()
         run: |
+          # Три исхода, и раньше этот шаг различал только первый из них. Второй —
+          # «сборка не собралась» — проходил молча, потому что последней командой
+          # в конвейере был `tail`, а он доволен и пустым вводом. Ровно так первое
+          # падение CI и осталось без объяснения.
           if grep -q "Test run with 0 tests" .build/ci-tests.log; then
             echo "::error::Ноль тестов — host-приложение упало на старте, а не «всё прошло»"
             exit 1
           fi
-          grep -oE "Test run with [0-9]+ tests? in [0-9]+ suites?" .build/ci-tests.log | tail -1
+
+          summary=$(grep -oE "Test run with [0-9]+ tests? in [0-9]+ suites?" .build/ci-tests.log | tail -1 || true)
+          if [ -z "$summary" ]; then
+            echo "::error::Тесты не запускались вовсе — упала сборка. Первые ошибки компилятора ниже"
+            # В аннотации, а не только в лог: логи Actions без токена не читаются,
+            # аннотации — читаются открытым API.
+            grep -E "error: " .build/ci-tests.log | head -5 | while IFS= read -r line; do
+              echo "::error title=Сборка::${line}"
+            done
+            exit 1
+          fi
+
+          echo "::notice title=Тесты::$summary"
+          echo "$summary"
 
       - name: Логи прогона
         if: failure()
