@@ -45,7 +45,16 @@ echo "▸ Проверки перед релизом…"
 # а DMG собран из другого, и разойдутся они молча.
 [ -z "$(git status --porcelain)" ] || fail "Рабочее дерево грязное — закоммитьте или отложите правки"
 
-git rev-parse -q --verify "refs/tags/$TAG" >/dev/null && fail "Тег $TAG уже существует"
+# Существующий тег — препятствие только если он указывает не сюда. Указывающий на HEAD
+# означает ровно то, что нужно: версия уже помечена, осталось собрать и выложить. Так выпускается
+# первый релиз после того, как теги проставлены задним числом, и так же повторяется прогон,
+# упавший после того, как тег уже поставлен.
+TAG_EXISTS=no
+if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+  [ "$(git rev-parse "$TAG^{commit}")" = "$(git rev-parse HEAD)" ] \
+    || fail "Тег $TAG уже есть и указывает на другой коммит — снимите его или возьмите другую версию"
+  TAG_EXISTS=yes
+fi
 
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 [ "$BRANCH" = "main" ] || echo "  ⚠ ветка $BRANCH, не main"
@@ -97,8 +106,12 @@ awk -v ver="$VERSION" '
 ' "$CHANGELOG" > "$NOTES"
 [ -s "$NOTES" ] || fail "Раздел ## [$VERSION] в CHANGELOG пуст"
 
-echo "▸ Тег $TAG…"
-git tag -a "$TAG" -m "GhostMeet $VERSION" -m "$(cat "$NOTES")"
+if [ "$TAG_EXISTS" = yes ]; then
+  echo "▸ Тег $TAG уже стоит на этом коммите — оставляю как есть"
+else
+  echo "▸ Тег $TAG…"
+  git tag -a "$TAG" -m "GhostMeet $VERSION" -m "$(cat "$NOTES")"
+fi
 
 if [ "$DRY_RUN" = yes ]; then
   echo
