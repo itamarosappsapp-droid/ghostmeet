@@ -74,7 +74,7 @@ xattr -dr com.apple.quarantine /Applications/GhostMeet.app
 
 **The build is signed but not notarised, and that command is not optional.** The project has an
 Apple Development certificate, not a Developer ID, so Gatekeeper refuses the app until the flag is
-cleared. The signature is real and stable (Team ID `Z6F3T2TJVB`), which matters more than it
+cleared. The signature is real and stable, which matters more than it
 looks: macOS permission grants are keyed to the signature, and an ad-hoc-signed build would
 re-prompt for the microphone and the screen on every update.
 

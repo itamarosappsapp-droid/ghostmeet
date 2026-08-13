@@ -65,7 +65,7 @@ struct AppDefaultsTests {
     func anOrdinaryLaunchKeepsTheRealDefaults() {
         #expect(AppDefaults.current(environment: [:]) === UserDefaults.standard)
         #expect(
-            AppDefaults.current(environment: ["HOME": "/Users/mikhail", "LANG": "ru_RU.UTF-8"])
+            AppDefaults.current(environment: ["HOME": "/Users/someone", "LANG": "ru_RU.UTF-8"])
                 === UserDefaults.standard,
             "обычное окружение не должно приниматься за тестовое"
         )
