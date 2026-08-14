@@ -15,7 +15,14 @@ Design decisions referenced below live in [docs/adr/](docs/adr/); the product sp
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- A visibility switch in the overlay header
+  ([ADR-0011](docs/adr/0011-visibility-switch-in-the-window.md)): one press puts the window back
+  into screen capture. It exists because with `sharingType = .none` the app cannot be screenshot or
+  recorded at all — a demo previously meant editing a constant and rebuilding. On by default, never
+  written to disk, locked (not overridden) while listening, and announced in an orange line for as
+  long as it is off. The settings window follows the same switch.
 
 ## [0.1.0] — 2026-08-12
 

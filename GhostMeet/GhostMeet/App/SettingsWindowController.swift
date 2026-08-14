@@ -38,6 +38,18 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     private var window: NSWindow?
 
+    /// Whether this window is kept out of screen capture. Owned by the overlay's
+    /// switch — see `OverlayWindowController.onCaptureVisibilityChange` — and
+    /// stored here so a window built *after* the switch was flipped is born with
+    /// the right value instead of the shipped default.
+    private var sharingType: NSWindow.SharingType = .none
+
+    /// Follows the app-wide switch. Applies to the window if it already exists.
+    func setSharingType(_ type: NSWindow.SharingType) {
+        sharingType = type
+        window?.sharingType = type
+    }
+
     init(store: SettingsStore, recognition: SpeechModelStatus) {
         self.store = store
         self.recognition = recognition
@@ -80,8 +92,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.title = "Настройки GhostMeet"
 
-        // Same content protection as the overlay: excluded from screen capture.
-        window.sharingType = .none
+        // Same content protection as the overlay, and it follows the same switch:
+        // otherwise the settings screen stays unrecordable while the overlay is
+        // deliberately visible, and «приложение невидимо» stops being true of the
+        // application and becomes true of one window.
+        window.sharingType = sharingType
 
         // Closing the window must not destroy it, and must not quit the app:
         // capture keeps running while settings are out of sight.

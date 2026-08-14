@@ -148,6 +148,14 @@ final class GhostMeetAppDelegate: NSObject, NSApplicationDelegate {
             Task { await updates.run() }
         }
 
+        // The settings window carries the same content protection as the overlay,
+        // so it follows the same switch. Wired here because this is the only
+        // place holding both windows — the overlay has no business knowing that
+        // a settings window exists.
+        overlayWindowController.onCaptureVisibilityChange = { [weak self] sharingType in
+            self?.settingsWindowController.setSharingType(sharingType)
+        }
+
         wireHotkeys()
 
         overlayWindowController.show()

@@ -28,7 +28,10 @@ while staying out of screen sharing.
 - **The screen travels with every request.** A screenshot plus Vision OCR, taken at the press —
   which is what makes `Solve on screen` work at all.
 - **Invisible to screen sharing.** The window is excluded from capture via `sharingType = .none`,
-  including from the app's own screenshots, so the model never sees its previous answer.
+  including from the app's own screenshots, so the model never sees its previous answer. A switch
+  in the header turns that off — the only way to screenshot or record the app itself. It is on at
+  every launch, never remembered, and locked while a session is listening
+  ([ADR-0011](docs/adr/0011-visibility-switch-in-the-window.md)).
 - **Any provider.** Anthropic, OpenAI-compatible endpoints, Gemini, local servers (Ollama,
   LM Studio, llama.cpp, MLX-LM), and CLI tools — all behind one protocol, keys in Keychain.
 
@@ -149,7 +152,7 @@ question:
 | [docs/GhostMeet.md](docs/GhostMeet.md) | the product spec — features, stack, file layout, roadmap |
 | [docs/GhostMeet-Prompts.md](docs/GhostMeet-Prompts.md) | the authoritative prompt texts, matched word for word by a test |
 | [CONTEXT.md](CONTEXT.md) | the glossary: `You`, `Them`, `Реплика`, `Подсказка`, `Профиль` have precise definitions |
-| [docs/adr/](docs/adr/) | ten architecture decisions, superseded ones kept for the reasoning they carry |
+| [docs/adr/](docs/adr/) | eleven architecture decisions, superseded ones kept for the reasoning they carry |
 | [CHANGELOG.md](CHANGELOG.md) | what landed, when, and why |
 
 Two rules govern changes here: documents are corrected by the same change that touches the code,

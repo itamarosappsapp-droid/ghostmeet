@@ -88,6 +88,51 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
+    // MARK: - Невидимость для захвата экрана
+
+    /// Whether the app's windows are kept out of screen capture.
+    ///
+    /// `true` on every launch and **deliberately not persisted**. A switch that
+    /// survived a restart would eventually be found in the state somebody left it
+    /// in a week ago while recording a demo — and found during an interview, on
+    /// the shared screen. The safe value is therefore the only one the app ever
+    /// starts in; making the window visible is a decision taken again each time.
+    @Published private(set) var isHiddenFromCapture: Bool = true
+
+    /// What the flag means to a window. `.readOnly` — not `.readWrite` — is what
+    /// an ordinary macOS window uses: capture may read it, nobody may draw into it.
+    var captureSharingType: NSWindow.SharingType { isHiddenFromCapture ? .none : .readOnly }
+
+    /// What the panel actually carries right now, or `nil` before it is built.
+    ///
+    /// Exists so the promise can be checked where it is kept — on the window —
+    /// rather than on the field that was supposed to reach it. The two came
+    /// apart once already in this project: `INFOPLIST_KEY_*` set values that
+    /// never landed in the bundle, and the build said nothing.
+    var windowSharingType: NSWindow.SharingType? { panel?.sharingType }
+
+    /// Called whenever the flag changes, so the app's *other* windows follow.
+    ///
+    /// The settings window carries the same protection, and a demo of the
+    /// settings screen is impossible while only the overlay obeys the switch.
+    /// A closure rather than a reference, because the overlay has no business
+    /// knowing that a settings window exists.
+    var onCaptureVisibilityChange: ((NSWindow.SharingType) -> Void)?
+
+    /// Turns the app's invisibility to screen capture on or off.
+    ///
+    /// **Refused while the session is listening** — that rule lives in the caller
+    /// (`ContentView` disables the control), because the window layer has no
+    /// opinion about what a call is. What lives here is the guarantee that a
+    /// change reaches the panel at once: `sharingType` is read by the window
+    /// server on the next frame, so no relaunch is involved.
+    func setHiddenFromCapture(_ hidden: Bool) {
+        guard hidden != isHiddenFromCapture else { return }
+        isHiddenFromCapture = hidden
+        panel?.sharingType = captureSharingType
+        onCaptureVisibilityChange?(captureSharingType)
+    }
+
     // MARK: - Visibility
 
     /// Puts the overlay on screen **without** activating GhostMeet.
@@ -129,6 +174,9 @@ final class OverlayWindowController: NSObject, ObservableObject, NSWindowDelegat
             defer: false
         )
         configuration.apply(to: panel)
+        // The configuration ships `.none`; this makes the panel obey the switch
+        // even if it was flipped before the window was ever built.
+        panel.sharingType = captureSharingType
         panel.delegate = self
 
         let hostingView = NSHostingView(

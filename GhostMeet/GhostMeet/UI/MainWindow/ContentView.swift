@@ -52,6 +52,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider().opacity(0.4)
+            captureVisibilityNotice
             updateNotice
             recognitionNotice
             failureNotice
@@ -100,6 +101,7 @@ struct ContentView: View {
 
                 Spacer(minLength: 12)
 
+                visibilityButton
                 listenButton
                 settingsButton
             }
@@ -125,6 +127,39 @@ struct ContentView: View {
     private var precallStrip: some View {
         if let settings {
             PrecallStripView(settings: settings, openSettings: openSettings)
+        }
+    }
+
+    // MARK: - Окно видно при захвате
+
+    /// Says out loud that the app's own promise is switched off right now.
+    ///
+    /// **Stays up during the call, and that is the whole point.** The dangerous
+    /// sequence is not «включил и забыл» in the abstract — it is: turned the
+    /// window visible last night to record a demo, opened the app this morning,
+    /// pressed «Слушать». The switch is locked by then and cannot be fixed, so
+    /// the only thing left is to state it where it cannot be missed. The
+    /// certain-leak branch of `routeNotice` earns its permanent line the same way.
+    ///
+    /// It is not shown in the safe state at all: an overlay that reassures you
+    /// every second about the thing that is working is an overlay you stop
+    /// reading.
+    @ViewBuilder
+    private var captureVisibilityNotice: some View {
+        if !controller.isHiddenFromCapture {
+            Label {
+                Text(session.isListening
+                     ? "Окно ВИДНО при шаринге и записи экрана. Прослушивание идёт — переключить уже нельзя."
+                     : "Окно видно при шаринге и записи экрана, и попадает в собственные скриншоты приложения.")
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "eye")
+            }
+            .font(.system(size: 11))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.orange.opacity(0.18))
         }
     }
 
@@ -204,6 +239,49 @@ struct ContentView: View {
         }
         .controlSize(.small)
         .help("Настройки: профиль, ключ провайдера, пороги нарезки реплик.")
+    }
+
+    // MARK: - Невидимость
+
+    /// The one control that can defeat the product's main promise, which is why
+    /// it is here and not in settings: it is flipped to record a demo and has to
+    /// be flipped back, and a switch you have to go looking for is a switch you
+    /// forget you left on.
+    ///
+    /// **Locked while listening.** Not «reset», not «forced» — locked. Whatever
+    /// state the user chose before pressing «Слушать» is the state the call runs
+    /// in, because changing it mid-call is either useless (already sharing) or a
+    /// panic move that the panic hotkey does better. What starting a session
+    /// takes away is the ability to change one's mind halfway.
+    private var visibilityButton: some View {
+        Button {
+            controller.setHiddenFromCapture(!controller.isHiddenFromCapture)
+        } label: {
+            Image(systemName: controller.isHiddenFromCapture ? "eye.slash" : "eye")
+                .font(.system(size: 12))
+        }
+        .controlSize(.small)
+        .foregroundStyle(controller.isHiddenFromCapture ? Color.secondary : Color.orange)
+        .disabled(session.isListening)
+        .help(visibilityHelp)
+        .accessibilityLabel(controller.isHiddenFromCapture
+            ? "Окно скрыто от захвата экрана"
+            : "Окно видно при захвате экрана")
+    }
+
+    /// Says what the button does *and* what it costs — the second part is the
+    /// one that matters. Making the window visible also puts it back into the
+    /// screenshots GhostMeet takes for itself, so the model starts seeing its own
+    /// previous answer.
+    private var visibilityHelp: String {
+        if session.isListening {
+            return controller.isHiddenFromCapture
+                ? "Прослушивание идёт — переключатель заблокирован. Окно скрыто от захвата и останется скрытым до конца."
+                : "Прослушивание идёт — переключатель заблокирован. Окно ВИДНО при захвате и останется видимым до конца."
+        }
+        return controller.isHiddenFromCapture
+            ? "Окно скрыто от захвата экрана. Нажмите, чтобы сделать его видимым — для записи ролика или скриншота."
+            : "Окно видно при захвате экрана: попадёт в шаринг и в собственные скриншоты приложения. Нажмите, чтобы снова скрыть."
     }
 
     // MARK: - Recognition readiness
